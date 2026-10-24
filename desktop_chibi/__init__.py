@@ -1,0 +1,1 @@
+"""A small desktop companion."""

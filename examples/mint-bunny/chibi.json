@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "name": "Mint Bunny",
+  "animations": {
+    "idle": {
+      "file": "idle.png",
+      "width": 32,
+      "height": 32,
+      "frames": 8,
+      "fps": 4
+    },
+    "walk": {
+      "file": "walk.png",
+      "width": 32,
+      "height": 32,
+      "frames": 4,
+      "fps": 8
+    },
+    "fall": {
+      "file": "fall.png",
+      "width": 32,
+      "height": 32,
+      "frames": 4,
+      "fps": 10
+    },
+    "land": {
+      "file": "land.png",
+      "width": 32,
+      "height": 32,
+      "frames": 6,
+      "fps": 12
+    },
+    "drag": {
+      "file": "drag.png",
+      "width": 32,
+      "height": 32,
+      "frames": 2,
+      "fps": 5
+    },
+    "idle_1": {
+      "file": "idle_1.png",
+      "width": 32,
+      "height": 32,
+      "frames": 8,
+      "fps": 5
+    }
+  }
+}

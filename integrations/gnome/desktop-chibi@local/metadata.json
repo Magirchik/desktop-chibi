@@ -1,0 +1,7 @@
+{
+  "uuid": "desktop-chibi@local",
+  "name": "Desktop Chibi Window Rules",
+  "description": "Active application rules for Desktop Chibi. Shortcuts use the system portal independently. No window titles or keystroke recording.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}
