@@ -43,6 +43,50 @@ class ScenarioTests(unittest.TestCase):
                     source='custom', event='custom', subject='', animation='notify', mode=mode, duration=4,
                     cooldown=2, sound=dict(enabled=True, file='/tmp/test-sound.wav', volume=35, when_hidden=False))
 
+    def test_animation_priority_prevents_low_event_from_interrupting_and_resumes(self):
+        pet = self.first.pet
+        pet.animations.specs = {'notify': {'priority': 80}, 'talk': {'priority': 10}}
+        pet.trigger_notification('important', 'notify', 5, 100)
+        since = pet.state_since
+        with patch.object(pet.animations, 'restart') as restart:
+            pet.trigger_notification('voice', 'talk', 20, 101)
+            restart.assert_not_called()
+        self.assertEqual(pet.state, 'notify')
+        self.assertEqual(pet.state_since, since)
+        self.assertEqual(pet.notification_state(104), 'notify')
+        self.assertEqual(pet.notification_state(106), 'talk')
+        self.assertIsNone(pet.notification_state(122))
+
+    def test_equal_priority_uses_newest_and_hold_renewal_keeps_order(self):
+        pet = self.first.pet
+        pet.trigger_notification('a', 'notify', 10, 100)
+        pet.trigger_notification('b', 'talk', 10, 101)
+        pet.trigger_notification('a', 'notify', 10, 102, restart=False)
+        self.assertEqual(pet.notification_state(103), 'talk')
+
+    def test_priority_survives_workshop_reload_and_rejects_invalid_import(self):
+        from desktop_chibi.animations import Animations, default_notification
+        from desktop_chibi.animation_editor import AnimationEditor
+        spec = {**default_notification(), 'priority': 75}
+        editor = AnimationEditor({'notify': spec})
+        try:
+            editor.state.setCurrentIndex(editor.state.findData('notify'))
+            self.assertEqual(editor.priority.value(), 75)
+            editor.priority.setValue(90)
+            self.assertEqual(editor.specs['notify']['priority'], 90)
+            editor.load_file(spec['file'])
+            self.assertEqual(editor.specs['notify']['priority'], 90)
+        finally:
+            editor.reject()
+            editor.deleteLater()
+        animations = Animations()
+        animations.configure({'notify': spec})
+        for invalid in (-1, 101, True, '90'):
+            with self.assertRaises(ValueError):
+                animations.configure({'notify': {**spec, 'priority': invalid}})
+            self.assertEqual(animations.specs['notify']['priority'], 75)
+        animations.configure({})
+
     def test_sound_cooldown_stop_and_hidden_opt_in(self):
         self.hub.source('custom')['enabled'] = True
         rule = self.rule()

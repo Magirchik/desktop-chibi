@@ -8,3 +8,6 @@ dist/
 release/
 *.spec
 *.egg-info/
+
+# Original screen recordings; README uses optimized copies in docs/images/.
+/Запись-экрана-от-*.gif

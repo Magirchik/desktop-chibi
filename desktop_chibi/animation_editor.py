@@ -135,6 +135,19 @@ class AnimationEditor(QDialog):
         files.addWidget(choose, 1)
         files.addWidget(self.clear_button)
         layout.addLayout(files)
+        priority_form = QFormLayout()
+        self.priority = QSpinBox()
+        self.priority.setRange(0, 100)
+        self.priority.setSpecialValueText('Обычный · 0')
+        self.priority.setToolTip('При одновременных событиях показывается анимация с большим приоритетом. При равных — последнее событие.')
+        self.priority.valueChanged.connect(self.edit_priority)
+        priority_form.addRow('Приоритет события', self.priority)
+        layout.addLayout(priority_form)
+        priority_hint = QLabel('Большее число перекрывает меньшее. После окончания важного события вернётся ещё активное событие. '
+                              'Ходьба и покой уступают событиям; перетаскивание, падение и приземление всегда выше.')
+        priority_hint.setWordWrap(True)
+        priority_hint.setObjectName('muted')
+        layout.addWidget(priority_hint)
         drawing = QHBoxLayout()
         self.draw_button = QPushButton('Редактировать кадры…')
         self.draw_button.setToolTip('Редактирование до 512×512 с сохранением ритма GIF. Для больших файлов можно выбрать размер и фрагмент; уменьшение для чибика доступно после рисования.')
@@ -271,6 +284,8 @@ class AnimationEditor(QDialog):
         self.clear_button.setEnabled(bool(spec))
         self.file_label.setText(Path(spec['file']).name if spec else 'Отдельный файл не выбран')
         self.file_label.setToolTip(spec.get('file', ''))
+        self.priority.setValue(spec.get('priority', 0))
+        self.priority.setEnabled(bool(spec))
         gif = Path(spec.get('file', '')).suffix.lower() == '.gif'
         for key, spin in self.fields.items():
             spin.setValue(spec.get(key, 8 if key == 'fps' else 1 if key == 'frames' else 0))
@@ -316,6 +331,10 @@ class AnimationEditor(QDialog):
             spec[key] = spin.value()
         spec['pingpong'] = self.pingpong.isChecked()
         self.reload_preview()
+
+    def edit_priority(self, value):
+        if not self.loading and self.current in self.specs:
+            self.specs[self.current]['priority'] = value
 
     def reload_preview(self):
         self.edit_timer.stop()
@@ -464,7 +483,8 @@ class AnimationEditor(QDialog):
     def load_file(self, path):
         checker = Animations(self)
         try:
-            spec = {'file': str(path), 'width': 0, 'height': 0, 'frames': 1, 'fps': 8}
+            spec = {'file': str(path), 'width': 0, 'height': 0, 'frames': 1, 'fps': 8,
+                    'priority': self.specs.get(self.current, {}).get('priority', 0)}
             checker.configure({self.current: spec})
             self.specs[self.current] = spec
             self.refresh()
@@ -571,7 +591,9 @@ class AnimationEditor(QDialog):
             return
         try:
             if editor.exec() == QDialog.DialogCode.Accepted:
-                self.specs[self.current] = self.write_drawing(editor.document, editor.output_size.currentData())
+                priority = self.specs.get(self.current, {}).get('priority', 0)
+                self.specs[self.current] = {**self.write_drawing(editor.document, editor.output_size.currentData()),
+                                            'priority': priority}
                 self.refresh()
         except ValueError as error:
             QMessageBox.warning(self, 'Не удалось сохранить рисунок', str(error))

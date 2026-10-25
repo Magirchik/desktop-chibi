@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from .desktop_controls import clean_window_rule
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Signal, QEvent
 from .performance import MAX_COMPANIONS, MODES, SOFT_BUDGET, PetScheduler
 from PySide6.QtWidgets import QMenu
 
@@ -53,12 +53,20 @@ class Companion:
 
 
 class CompanionManager(QObject):
+    stacking_changed = Signal()
+
     def __init__(self, owner, pet_class, defaults):
         super().__init__(owner)
         self.owner, self.pet_class, self.defaults = owner, pet_class, defaults
         self.items = []
         self.active = 0
         self.loading = True
+        self.stacking_order = []
+        self.restacking = False
+        self.stacking_stopped = False
+        self.stack_timer = QTimer(self)
+        self.stack_timer.setSingleShot(True)
+        self.stack_timer.timeout.connect(self.apply_stacking_order)
         self.performance_mode = owner.store.value('performance_mode', 'auto')
         if self.performance_mode not in ('auto', 'eco', 'smooth'):
             self.performance_mode = 'auto'
@@ -92,10 +100,54 @@ class CompanionManager(QObject):
             initial_pet.hide()
             initial_pet.deleteLater()
         self.active = min(max(0, int(owner.store.value('active_companion', 0))), len(self.items) - 1)
+        try:
+            order = json.loads(owner.store.value('companion_stacking_v1', '[]'))
+        except (TypeError, ValueError):
+            order = []
+        self.stacking_order = self.clean_stacking_order(order)
+        for item in self.items:
+            item.pet.installEventFilter(self)
         self.loading = False
         self.rebuild_selector()
         self.load_active()
         owner._loading_companion = False
+        self.schedule_stacking()
+
+    def clean_stacking_order(self, order):
+        valid = {item.identity for item in self.items}
+        result = []
+        for identity in order if isinstance(order, list) else []:
+            if isinstance(identity, str) and identity in valid and identity not in result:
+                result.append(identity)
+        # Previously the last created window was in front.
+        return result + [item.identity for item in reversed(self.items) if item.identity not in result]
+
+    def set_stacking_order(self, order):
+        self.stacking_order = self.clean_stacking_order(order)
+        self.owner.store.setValue('companion_stacking_v1', json.dumps(self.stacking_order))
+        self.stacking_changed.emit()
+        self.schedule_stacking()
+
+    def schedule_stacking(self):
+        if not self.stacking_stopped and not self.restacking and not self.stack_timer.isActive():
+            self.stack_timer.start(0)
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Show, QEvent.Type.ZOrderChange, QEvent.Type.MouseButtonPress):
+            self.schedule_stacking()
+        return False
+
+    def apply_stacking_order(self):
+        if self.stacking_stopped or self.restacking:
+            return
+        self.restacking = True
+        try:
+            for identity in reversed(self.stacking_order):
+                item = self.find(identity)
+                if item and item.pet.isVisible():
+                    item.pet.raise_()
+        finally:
+            self.restacking = False
 
     def clean_settings(self, values):
         result = dict(self.defaults)
@@ -170,6 +222,8 @@ class CompanionManager(QObject):
         self.capture_active()
         self.owner.store.setValue('companions_v1', json.dumps(self.records(), ensure_ascii=False))
         self.owner.store.setValue('active_companion', self.active)
+        self.owner.store.setValue('companion_stacking_v1', json.dumps(self.stacking_order))
+        self.stacking_changed.emit()
         self.update_load_label()
 
     def schedule_persist(self):
@@ -247,6 +301,8 @@ class CompanionManager(QObject):
         self.set_layer(pet, controller.values['layer'])
         pet.show()
         self.items.append(Companion(identity, f'Чибик {len(self.items) + 1}', '', pet, controller))
+        pet.installEventFilter(self)
+        self.set_stacking_order([identity] + self.stacking_order)
         self.select(len(self.items) - 1)
 
     def reset_settings(self):
@@ -268,6 +324,8 @@ class CompanionManager(QObject):
         if len(self.items) == 1:
             return
         removed = self.items.pop(self.active)
+        removed.pet.removeEventFilter(self)
+        self.stacking_order = self.clean_stacking_order(self.stacking_order)
         self.scheduler.detach(removed.pet)
         removed.pet.hide()
         removed.pet.deleteLater()
@@ -331,6 +389,8 @@ class CompanionManager(QObject):
             self.scheduler.wake()
 
     def shutdown(self):
+        self.stacking_stopped = True
+        self.stack_timer.stop()
         self.persist()
         self.scheduler.shutdown()
         for item in self.items:

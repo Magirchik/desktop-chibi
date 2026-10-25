@@ -92,7 +92,7 @@ class PetScheduler(QObject):
             visible = True
             if (pet.option('game_overlay') and QApplication.platformName() == 'xcb'
                     and now - getattr(handle, 'last_raise', 0) >= 2):
-                pet.raise_()
+                self.manager.schedule_stacking()
                 handle.last_raise = now
             if handle.hidden:
                 pet.last_tick = now

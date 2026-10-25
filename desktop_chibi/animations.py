@@ -291,6 +291,9 @@ class Animations(QObject):
                     raise ValueError(f'Неизвестное состояние: {state}')
                 if not isinstance(spec, dict):
                     raise ValueError(f'{state}: неверное описание анимации.')
+                priority = spec.get('priority', 0)
+                if type(priority) is not int or not 0 <= priority <= 100:
+                    raise ValueError(f'{state}: приоритет должен быть целым числом от 0 до 100.')
                 existing = self.clips.get(state)
                 if existing and (spec == existing.source_spec or spec == existing.spec):
                     pending[state] = existing

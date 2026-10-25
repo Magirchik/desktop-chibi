@@ -238,7 +238,8 @@ class Pet(QWidget):
         if len(self.notifications) > 128:
             oldest = min(self.notifications, key=lambda item: self.notifications[item]['until'])
             self.notifications.pop(oldest, None)
-        if (restart or previous is None) and self.drag_offset is None and not self.motion.airborne and now >= self.landing_until:
+        if ((restart or previous is None) and self.drag_offset is None and not self.motion.airborne
+                and now >= self.landing_until and self.notification_state(now) == animation):
             self.set_state(animation, now)
             self.state_since = now
             self.animations.restart()
@@ -257,7 +258,9 @@ class Pet(QWidget):
         if not self.notifications:
             return None
         active = [value for value in self.notifications.values() if 'pending' not in value]
-        return max(active, key=lambda value: value['started'])['animation'] if active else None
+        return max(active, key=lambda value: (
+            self.animations.specs.get(value['animation'], {}).get('priority', 0),
+            value['started']))['animation'] if active else None
 
     def cancel_notification(self, key):
         if key not in self.notifications:
@@ -718,6 +721,9 @@ class Settings(QWidget):
         self.layer.setCurrentIndex(max(0, min(2, int(self.store.value('layer', DEFAULT_SETTINGS['layer'])))))
         form.addRow('Слой', self.layer)
         display_layout.addLayout(form)
+        from .stacking_ui import StackingOrder
+        self.stacking_editor = StackingOrder()
+        display_layout.addWidget(self.stacking_editor)
         self.game_overlay = QCheckBox('Игровой оверлей для этого чибика')
         self.game_overlay.setChecked(self.store.value('game_overlay', False, type=bool))
         display_layout.addWidget(self.game_overlay)
@@ -826,6 +832,7 @@ class Settings(QWidget):
         self.preview_timer.timeout.connect(self.preview.update)
         self.settings_tabs.currentChanged.connect(self.sync_preview_clock)
         self.manager = CompanionManager(self, Pet, DEFAULT_SETTINGS)
+        self.stacking_editor.bind(self.manager)
         self.companion_select.currentIndexChanged.connect(self.manager.select)
         self.add_companion_button.clicked.connect(self.manager.add)
         self.remove_companion_button.clicked.connect(self.manager.remove)
