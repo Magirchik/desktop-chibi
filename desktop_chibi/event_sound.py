@@ -2,6 +2,7 @@
 from pathlib import Path
 import shutil
 import time
+import sys
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
@@ -27,6 +28,7 @@ class EventSound(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = None
+        self.native = None
         self.last_play = -float('inf')
         self.timeout = QTimer(self)
         self.timeout.setSingleShot(True)
@@ -37,7 +39,7 @@ class EventSound(QObject):
         if not sound.get('enabled') or not sound.get('volume', 35):
             return False
         # One sound channel prevents a global rule from playing 32 copies.
-        if self.process is not None or time.monotonic() - self.last_play < .25:
+        if self.process is not None or self.native is not None or time.monotonic() - self.last_play < .25:
             return False
         path = Path(sound['file']).expanduser()
         try:
@@ -50,6 +52,20 @@ class EventSound(QObject):
             self.status.emit(str(error))
             return False
         volume = sound.get('volume', 35) / 100
+        if sys.platform == 'win32':
+            from .windows_sound import WaveSound
+            native = WaveSound(self)
+            try:
+                native.start(path.resolve(), sound.get('volume', 35))
+            except ValueError as error:
+                native.deleteLater()
+                self.status.emit(str(error))
+                return False
+            self.native = native
+            native.finished.connect(self.native_finished)
+            self.last_play = time.monotonic()
+            self.timeout.start(15000)
+            return True
         player = shutil.which('pw-play') or shutil.which('paplay')
         if not player:
             self.status.emit('Для звука нужен pw-play (PipeWire) или paplay (PulseAudio).')
@@ -67,6 +83,10 @@ class EventSound(QObject):
         self.timeout.start(15000)
         return True
 
+    def native_finished(self, message):
+        self.stop()
+        self.status.emit(message)
+
     def finished(self, process, code):
         if self.process is not process:
             return
@@ -77,6 +97,10 @@ class EventSound(QObject):
 
     def stop(self):
         self.timeout.stop()
+        native, self.native = self.native, None
+        if native is not None:
+            native.stop()
+            native.deleteLater()
         process, self.process = self.process, None
         if process is not None:
             process.kill()

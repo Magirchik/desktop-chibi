@@ -217,7 +217,7 @@ class PlaybackTests(unittest.TestCase):
     def test_monitor_filters_aliases_at_bus(self):
         hub = FakeHub()
         adapter = NotificationAdapter(hub, {'id': 'notifications', 'apps': ['Telegram Desktop']})
-        with patch('desktop_chibi.event_adapters.shutil.which', return_value='/usr/bin/dbus-monitor'), patch.object(adapter.process, 'start') as start:
+        with patch('desktop_chibi.event_adapters.sys.platform', 'linux'), patch('desktop_chibi.event_adapters.shutil.which', return_value='/usr/bin/dbus-monitor'), patch.object(adapter.process, 'start') as start:
             adapter.start()
         args = start.call_args.args[1]
         self.assertTrue(any("arg0='Telegram'" in match for match in args))

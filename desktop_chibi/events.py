@@ -9,6 +9,7 @@ import secrets
 import stat
 import tempfile
 import time
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -209,6 +210,8 @@ class EventHub(QObject):
         for source in self.sources:
             if not source['enabled']:
                 self.set_status(source['id'], 'Выключен')
+            elif source['kind'] in ('notifications', 'audio', 'vesktop') and not sys.platform.startswith('linux'):
+                self.set_status(source['id'], 'Этот источник доступен только в Linux. Используйте локальные события или таймеры.')
             elif source['kind'] == 'vesktop':
                 if not self.server.isListening():
                     self.set_status(source['id'], 'Локальный канал занят. Закройте другой экземпляр Desktop Chibi.')

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,7 +32,7 @@ class EventTests(unittest.TestCase):
     def setUp(self):
         QSettings('DesktopChibi', 'DesktopChibi').clear()
         self.temp = tempfile.TemporaryDirectory(prefix='chibi-ipc-')
-        self.socket_path = str(Path(self.temp.name) / 'events.sock')
+        self.socket_path = 'chibi-test-' + uuid.uuid4().hex if os.name == 'nt' else str(Path(self.temp.name) / 'events.sock')
         self.patch = patch('desktop_chibi.events.socket_name', return_value=self.socket_path)
         self.patch.start()
         self.settings = Settings()

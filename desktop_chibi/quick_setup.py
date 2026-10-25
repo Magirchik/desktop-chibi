@@ -1,6 +1,7 @@
 """Three-step presets with a review of permissions before any source is enabled."""
 import copy
 import uuid
+import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -10,7 +11,7 @@ from .events import validate_config
 from .animations import STATES
 from .guides import GuideDialog, event_command
 from .performance import MAX_COMPANIONS
-from .pixel_ui import apply_theme
+from .pixel_ui import apply_theme, window_bar, PixelSurface
 from .sound_ui import SoundOptions
 from .notification_setup import NotificationPicker
 
@@ -37,8 +38,7 @@ class QuickSetup(QDialog):
         self.resize(650, 660)
         self.setMinimumSize(500, 440)
         layout = QVBoxLayout(self)
-        self.step_label = QLabel()
-        self.step_label.setObjectName('bar')
+        self.step_label = window_bar('Помощник настройки')
         layout.addWidget(self.step_label)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
@@ -46,6 +46,10 @@ class QuickSetup(QDialog):
         self.scenario = QComboBox()
         for key, (name, _) in SCENARIOS.items():
             self.scenario.addItem(name, key)
+            if sys.platform == 'win32' and key in ('messages', 'audio', 'vesktop'):
+                item = self.scenario.model().item(self.scenario.count() - 1)
+                item.setEnabled(False)
+                item.setToolTip('Этот источник использует системные службы Linux.')
         first.addWidget(QLabel('Что должен делать чибик?'))
         first.addWidget(self.scenario)
         self.description = QLabel()
@@ -150,7 +154,7 @@ class QuickSetup(QDialog):
     def page(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        content = QWidget()
+        content = PixelSurface()
         content.setObjectName('content')
         layout = QVBoxLayout(content)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -370,7 +374,7 @@ class QuickSetup(QDialog):
 
     def update_step(self):
         self.stack.setCurrentIndex(self.step)
-        self.step_label.setText(f' +  БЫСТРАЯ НАСТРОЙКА / ШАГ {self.step + 1} ИЗ 3')
+        self.step_label.setText(f'Помощник настройки · {self.step + 1} / 3')
         self.back.setEnabled(self.step > 0)
         self.next.setText('Применить' if self.step == 2 else 'Далее')
 
@@ -404,7 +408,8 @@ class QuickSetup(QDialog):
             self.error.setText(str(error) or 'Источник недоступен. Проверьте точные настройки.')
 
     def help(self):
-        topic = {'decorative': 'start', 'messages': 'notifications', 'code': 'code', 'discord': 'discord', 'audio': 'audio', 'vesktop': 'vesktop'}[self.scenario.currentData()]
+        topic = {'decorative': 'start', 'messages': 'notifications', 'code': 'code', 'discord': 'discord', 'audio': 'audio', 'vesktop': 'vesktop',
+                 'timer': 'routines', 'reminder': 'routines', 'focus': 'routines'}[self.scenario.currentData()]
         dialog = GuideDialog(self, topic)
         dialog.exec()
         dialog.deleteLater()

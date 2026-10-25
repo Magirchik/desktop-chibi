@@ -25,6 +25,7 @@ APP = QApplication.instance() or QApplication([])
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(os.name == 'posix', 'The current Vesktop native plugin and installer target Linux')
 class VesktopBridgeTests(unittest.TestCase):
     def setUp(self):
         QSettings('DesktopChibi', 'DesktopChibi').clear()

@@ -1,0 +1,21 @@
+Desktop Chibi bundles dynamically loaded Qt and Qt for Python (PySide6,
+Shiboken) libraries from The Qt Company Ltd. and their contributors.
+The LGPL v3 license texts are supplied here. Font licenses are included
+under _internal/desktop_chibi/assets/fonts/ in the standalone bundle.
+
+Qt for Python source and notices:
+https://code.qt.io/cgit/pyside/pyside-setup.git/
+https://github.com/pyside/pyside-setup
+
+Qt source and notices:
+https://code.qt.io/cgit/qt/
+https://download.qt.io/official_releases/qt/
+
+The exact installed library versions are recorded in build-*.json and
+requirements-build.txt. Qt/PySide shared libraries remain separate files
+under _internal/PySide6/ and can be replaced with compatible builds.
+No modifications to Qt or PySide libraries are made by Desktop Chibi.
+
+PyInstaller's bootloader is distributed under its GPL license with a
+bootloader exception; see https://pyinstaller.org/en/stable/license.html.
+This notice does not assign a new license to the Desktop Chibi source code.

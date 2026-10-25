@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from .animations import STATES
 from .discord_rpc import default_discord_socket
-from .pixel_ui import apply_theme
+from .pixel_ui import apply_theme, window_bar, PixelSurface
 from .sound_ui import SoundOptions
 from .guides import GuideDialog
 from .notification_setup import NotificationPicker, send_test_notification
@@ -31,8 +31,7 @@ class EventDialog(QDialog):
         self.resize(800, 820)
         self.setMinimumSize(620, 520)
         outer = QVBoxLayout(self)
-        bar = QLabel(' +  EVENT CENTER / СОБЫТИЯ И РАЗРЕШЕНИЯ')
-        bar.setObjectName('bar')
+        bar = window_bar('События и правила')
         outer.addWidget(bar)
         help_button = QPushButton('Нужна помощь? Пошаговые гайды')
         help_button.clicked.connect(self.open_guide)
@@ -226,7 +225,7 @@ class EventDialog(QDialog):
     def page(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        content = QWidget()
+        content = PixelSurface()
         content.setObjectName('content')
         layout = QVBoxLayout(content)
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)

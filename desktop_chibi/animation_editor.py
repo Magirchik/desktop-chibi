@@ -8,13 +8,16 @@ from bisect import bisect_right
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
-from .animations import Animations, STATES, read_manifest
+from .animations import Animations, STATES, read_manifest, cached_gif
 from .pixel_ui import bunny_frame, apply_theme, PixelSurface, PixelTabs, PixelPreview, window_bar
 from .pixel_editor import PixelEditor, PixelDocument
+from .pixel_document import EDITOR_BYTES
+from .gif_import import GifImport
 
 
 class AnimationEditor(QDialog):
@@ -52,7 +55,7 @@ class AnimationEditor(QDialog):
         content_layout = layout
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
         bar = window_bar('Мастерская анимаций')
-        layout.addWidget(bar)
+        outer.insertWidget(0, bar)
         subtitle = QLabel('Выберите состояние и настройте его анимацию.')
         subtitle.setObjectName('muted')
         subtitle.setWordWrap(True)
@@ -97,12 +100,30 @@ class AnimationEditor(QDialog):
         playback.addWidget(restart)
         self.clip_info = QLabel()
         self.clip_info.setObjectName('muted')
+        self.clip_info.setWordWrap(True)
         playback.addWidget(self.clip_info, 1)
         layout.addLayout(playback)
         self.seek = QSlider(Qt.Orientation.Horizontal)
         self.seek.setToolTip('Пауза и просмотр отдельного кадра GIF')
         self.seek.sliderMoved.connect(self.seek_frame)
         layout.addWidget(self.seek)
+        self.gif_range = QWidget()
+        range_layout = QVBoxLayout(self.gif_range)
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        range_form = QHBoxLayout()
+        range_layout.addLayout(range_form)
+        markers = QHBoxLayout()
+        self.range_buttons = {}
+        for key, label in [('first', 'Начало здесь'), ('last', 'Конец здесь'), ('reset', 'Весь GIF')]:
+            button = QPushButton(label)
+            button.clicked.connect(lambda checked=False, boundary=key: self.set_boundary(boundary))
+            markers.addWidget(button)
+            self.range_buttons[key] = button
+        range_layout.addLayout(markers)
+        self.gif_frame_number = QLabel()
+        self.gif_frame_number.setObjectName('muted')
+        range_layout.addWidget(self.gif_frame_number)
+        layout.addWidget(self.gif_range)
         self.file_label = QLabel()
         self.file_label.setWordWrap(True)
         layout.addWidget(self.file_label)
@@ -116,7 +137,7 @@ class AnimationEditor(QDialog):
         layout.addLayout(files)
         drawing = QHBoxLayout()
         self.draw_button = QPushButton('Редактировать кадры…')
-        self.draw_button.setToolTip('Пиксельный редактор: до 256×256. При преобразовании GIF задержки заменяются равномерным FPS. «Настройки GIF» сохраняют исходный ритм кадров.')
+        self.draw_button.setToolTip('Редактирование до 512×512 с сохранением ритма GIF. Для больших файлов можно выбрать размер и фрагмент; уменьшение для чибика доступно после рисования.')
         self.draw_button.setObjectName('primary')
         self.draw_button.clicked.connect(self.draw_animation)
         create = QPushButton('Нарисовать нового чибика…')
@@ -159,7 +180,11 @@ class AnimationEditor(QDialog):
                 spin.setSpecialValueText('Исходный')
                 spin.setToolTip('Длинная сторона кадра. 128–256 пкс обычно достаточно для чибика и требует меньше памяти.')
             spin.valueChanged.connect(self.edit_gif)
-            gif_form.addRow(label, spin)
+            if key in ('first_frame', 'last_frame'):
+                range_form.addWidget(QLabel('С кадра' if key == 'first_frame' else 'По кадр'))
+                range_form.addWidget(spin, 1)
+            else:
+                gif_form.addRow(label, spin)
             self.gif_fields[key] = spin
         self.reverse = QCheckBox('Начинать с последнего кадра')
         self.reverse.toggled.connect(self.edit_gif)
@@ -257,6 +282,11 @@ class AnimationEditor(QDialog):
         self.gif_toggle.setVisible(gif)
         self.gif_options.setVisible(gif and self.gif_toggle.isChecked())
         self.seek.setVisible(gif)
+        self.gif_range.setVisible(gif)
+        if gif:
+            count = QImageReader(spec['file']).imageCount()
+            for key in ('first_frame', 'last_frame'):
+                self.gif_fields[key].setMaximum(min(10000, count) if count > 0 else 10000)
         for key, spin in self.gif_fields.items():
             spin.setValue(spec.get(key, 100 if key == 'speed' else 0) + (1 if key == 'first_frame' else 0))
         self.reverse.setChecked(spec.get('reverse', False))
@@ -279,6 +309,8 @@ class AnimationEditor(QDialog):
             return
         spec = self.specs[self.current]
         for key, spin in self.fields.items():
+            if key == 'fps' and spec.get(key, 8) != spin.value():
+                spec.pop('delays', None)
             if key in ('width', 'height', 'frames') and spec.get(key) != spin.value():
                 spec.pop('project', None)
             spec[key] = spin.value()
@@ -301,6 +333,8 @@ class AnimationEditor(QDialog):
             count = len(clip.frames) if clip and clip.frames else clip.movie.frameCount() if clip and clip.movie else 0
             self.seek.setRange(0, max(0, count - 1))
             self.seek.setEnabled(bool(clip and clip.gif_delays))
+            for key in ('first', 'last'):
+                self.range_buttons[key].setEnabled(bool(clip and clip.gif_delays))
             self.seek.setValue(0)
             duration = f'{clip.duration:.2f}'.replace('.', ',') if clip else ''
             size = clip.frames[0].size() if clip and clip.frames else None
@@ -328,6 +362,8 @@ class AnimationEditor(QDialog):
             self.seek.setValue(len(clip.frames) - source_index - 1 if clip.spec.get('reverse') else source_index)
             next_frame = clip.frame_ends[index] - (max(0, elapsed) * 1000) % clip.frame_ends[-1]
             self.timer.setInterval(max(8, min(250, round(next_frame))))
+        if clip and clip.gif_delays:
+            self.gif_frame_number.setText(f'Кадр исходника: {self.source_frame()}')
         key = frame.cacheKey()
         if key == self.preview_key:
             return
@@ -350,12 +386,38 @@ class AnimationEditor(QDialog):
             return
         if self.preview_playing:
             self.toggle_preview()
+        self.seek.setValue(index)
         order = tuple(range(len(clip.frames)))
         if clip.spec.get('reverse', False):
             order = order[::-1]
         self.paused_elapsed = sum(clip.gif_delays[i] for i in order[:index]) / 1000 * 100 / clip.speed
         self.started = time.monotonic() - self.paused_elapsed
         self.render_preview()
+
+    def source_frame(self):
+        clip = self.player.clips.get(self.current)
+        if not clip or not clip.frames:
+            return 1
+        index = self.seek.value()
+        if clip.spec.get('reverse'):
+            index = len(clip.frames) - 1 - index
+        return clip.spec.get('first_frame', 0) + index + 1
+
+    def set_boundary(self, boundary):
+        frame = self.source_frame()
+        if boundary == 'reset':
+            self.gif_fields['first_frame'].setValue(1)
+            self.gif_fields['last_frame'].setValue(0)
+        elif boundary == 'first':
+            end = self.gif_fields['last_frame'].value()
+            if end and end < frame:
+                self.gif_fields['last_frame'].setValue(frame)
+            self.gif_fields['first_frame'].setValue(frame)
+        else:
+            if frame < self.gif_fields['first_frame'].value():
+                self.gif_fields['first_frame'].setValue(frame)
+            self.gif_fields['last_frame'].setValue(frame)
+        self.reload_preview()
 
     def restart_preview(self):
         self.started = time.monotonic()
@@ -429,69 +491,87 @@ class AnimationEditor(QDialog):
         self.refresh()
 
     def frames_for_drawing(self):
-        """Use the selected clip, then the base texture, then a built-in pose."""
+        document = self.drawing_document()
+        return document.frames, document.fps
+
+    def drawing_document(self, override=None):
         key = self.current if self.current in self.specs else 'idle'
-        if key not in self.specs:
-            return [bunny_frame(state=self.current).toImage()], 8
+        spec = dict(override or self.specs.get(key, {}))
+        if not spec:
+            return PixelDocument([bunny_frame(state=self.current).toImage()])
+        if spec.get('project'):
+            document = PixelDocument.load_project(spec['project'])
+            document.fps = spec.get('fps', document.fps)
+            document.delays = PixelDocument.validate_delays(spec.get('delays'), document.count)
+            return document
+        path = Path(spec['file'])
+        if path.suffix.lower() == '.gif':
+            frames, delays = cached_gif(path, spec.get('first_frame', 0), spec.get('last_frame', 0),
+                                       spec.get('max_size', 0), memory_limit=EDITOR_BYTES)
+            images = [frame.toImage() for frame in frames]
+            delays = [max(10, round(delay * 100 / spec.get('speed', 100))) for delay in delays]
+            if spec.get('reverse'):
+                images.reverse()
+                delays.reverse()
+            fps = max(1, min(60, round(1000 * len(delays) / sum(delays))))
+            return PixelDocument(images, fps=fps, delays=delays)
         loader = Animations(self)
         try:
-            loader.configure({key: self.specs[key]})
+            loader.configure({key: spec})
             clip = loader.clips[key]
-            if clip.movie:
-                if clip.movie.frameCount() > 512:
-                    raise ValueError('Для рисования поддерживается не больше 512 кадров.')
-                if max(clip.movie.currentPixmap().width(), clip.movie.currentPixmap().height()) > 256:
-                    raise ValueError('Сначала уменьшите GIF до 256 пкс в «Настройки GIF → Размер».')
-                frames = []
-                delays = []
-                for index in range(min(512, max(1, clip.movie.frameCount()))):
-                    if clip.movie.jumpToFrame(index):
-                        frames.append(clip.movie.currentImage().copy())
-                        delays.append(max(10, clip.movie.nextFrameDelay()))
-                fps = max(1, min(60, round(1000 * len(delays) / sum(delays)))) if delays else 8
-            else:
-                frames = [frame.toImage() for frame in clip.frames]
-                fps = max(1, min(60, round(1000 * len(clip.gif_delays) / sum(clip.gif_delays)))) if clip.gif_delays else clip.fps
-                if clip.gif_delays:
-                    fps = max(1, min(60, round(fps * clip.speed / 100)))
-                    if clip.spec.get('reverse', False):
-                        frames.reverse()
-            if not frames or any(max(frame.width(), frame.height()) > 256 for frame in frames):
-                raise ValueError('Для рисования нужны кадры размером до 256×256. Создайте новый холст или загрузите меньшую текстуру.')
-            return frames, fps
+            return PixelDocument([frame.toImage() for frame in clip.frames], fps=clip.fps,
+                                 delays=list(clip.gif_delays) if clip.gif_delays else None)
         finally:
             loader.configure({})
             loader.deleteLater()
 
-    def write_drawing(self, document):
+    def write_drawing(self, document, output_size=0):
+        dimensions = document.export_dimensions(output_size)
+        width, height = dimensions.width(), dimensions.height()
         path = Path(self.drafts.name) / (uuid.uuid4().hex + '.png')
-        if not document.sheet().save(str(path)):
+        if not document.sheet(max(width, height)).save(str(path)):
             raise ValueError('Не удалось сохранить нарисованную анимацию.')
         project = path.with_suffix('.pixel.json')
         document.save_project(project)
-        return {'file': str(path), 'project': str(project), 'width': document.image.width(), 'height': document.image.height(),
+        spec = {'file': str(path), 'project': str(project), 'width': width, 'height': height,
                 'frames': document.count, 'fps': document.fps, 'pingpong': document.pingpong}
+        if document.delays:
+            spec['delays'] = list(document.delays)
+        return spec
 
     def draw_animation(self):
-        try:
-            key = self.current if self.current in self.specs else 'idle'
-            spec = self.specs.get(key, {})
-            if spec.get('project'):
-                document = PixelDocument.load_project(spec['project'])
+        self.edit_timer.stop()
+        key = self.current if self.current in self.specs else 'idle'
+        spec = dict(self.specs.get(key, {}))
+        if Path(spec.get('file', '')).suffix.lower() == '.gif':
+            reader = QImageReader(spec['file'])
+            size, count = reader.size(), reader.imageCount()
+            chosen_size = spec.get('max_size', 0)
+            if chosen_size and max(size.width(), size.height()) > chosen_size:
+                edited_size = size.scaled(chosen_size, chosen_size, Qt.AspectRatioMode.KeepAspectRatio)
             else:
-                frames, fps = self.frames_for_drawing()
-                document = PixelDocument(frames, fps=fps)
-            if Path(spec.get('file', '')).suffix.lower() != '.gif':
-                document.fps = spec.get('fps', document.fps)
+                edited_size = size
+            selected_count = (spec.get('last_frame') or count) - spec.get('first_frame', 0)
+            if (max(edited_size.width(), edited_size.height()) > 512 or selected_count > 512
+                    or edited_size.width() * edited_size.height() * selected_count * 4 > EDITOR_BYTES):
+                preparation = GifImport(size, count, spec, self)
+                try:
+                    if preparation.exec() != QDialog.DialogCode.Accepted:
+                        return
+                    spec.update(preparation.values())
+                finally:
+                    preparation.deleteLater()
+        try:
+            document = self.drawing_document(spec)
             document.pingpong = spec.get('pingpong', document.pingpong)
             editor = PixelEditor(parent=self, document=document,
                                  title=STATES.get(self.current, self.state.currentText()))
-        except ValueError as error:
+        except (OSError, ValueError) as error:
             QMessageBox.warning(self, 'Не удалось открыть рисунок', str(error))
             return
         try:
             if editor.exec() == QDialog.DialogCode.Accepted:
-                self.specs[self.current] = self.write_drawing(editor.document)
+                self.specs[self.current] = self.write_drawing(editor.document, editor.output_size.currentData())
                 self.refresh()
         except ValueError as error:
             QMessageBox.warning(self, 'Не удалось сохранить рисунок', str(error))
@@ -502,7 +582,7 @@ class AnimationEditor(QDialog):
         editor = PixelEditor(parent=self, title='Новый чибик')
         try:
             if editor.exec() == QDialog.DialogCode.Accepted:
-                self.specs = {'idle': self.write_drawing(editor.document)}
+                self.specs = {'idle': self.write_drawing(editor.document, editor.output_size.currentData())}
                 self.created_character = True
                 self.character_name.show()
                 self.tabs.setCurrentIndex(1)

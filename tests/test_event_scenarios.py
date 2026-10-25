@@ -194,7 +194,7 @@ class SoundProcessTests(unittest.TestCase):
             path.write_bytes(b'test')
             settings = dict(enabled=True, file=str(path), volume=40)
             process = Mock()
-            with patch('desktop_chibi.event_sound.shutil.which', return_value='/usr/bin/pw-play'), patch('desktop_chibi.event_sound.QProcess', return_value=process) as cls:
+            with patch('desktop_chibi.event_sound.sys.platform', 'linux'), patch('desktop_chibi.event_sound.shutil.which', return_value='/usr/bin/pw-play'), patch('desktop_chibi.event_sound.QProcess', return_value=process) as cls:
                 cls.nullDevice.return_value = '/dev/null'
                 self.assertTrue(sound.play(settings))
                 process.start.assert_called_once_with('/usr/bin/pw-play', ['--volume=0.40', str(path.resolve())])

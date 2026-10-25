@@ -1,100 +1,151 @@
 """Code-drawn pixel assets and a pastel desktop theme."""
 from functools import lru_cache
 from pathlib import Path
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget, QSizePolicy
+from PySide6.QtCore import Qt, QSize, QObject, QEvent
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QImage, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QAbstractButton, QLabel, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget, QSizePolicy, QSizeGrip, QMenu
+from .appearance import appearance, theme_color, themed_stylesheet
 
 THEME = '''
-QWidget { color: #402d55; font-family: "DejaVu Sans Mono", monospace; font-size: 14px; border-radius: 0; }
-QDialog { background: #dfcef2; }
+QWidget { color: #493258; font-family: "Pixeloid Sans", "DejaVu Sans", sans-serif; font-size: 18px; border-radius: 0; }
+QDialog, QWidget#desktop { background: #e5cdef; border: 2px solid #765386; border-top-color: #fffaff; border-left-color: #fffaff; }
 QWidget#content { background: transparent; }
-QWidget#desktop { background: #cbb2e8; }
-QWidget#panel { background: #fff4fc; border: 2px solid #82629d; }
-QWidget#panelHeader { background: #e1d0f1; border: none; border-bottom: 2px solid #b69acb; }
-QWidget#panelBody { background: #fff4fc; border: none; }
-QWidget#titlebar { background: #8161a7; border: 2px solid #59406f; border-top-color: #f7e7ff; border-left-color: #f7e7ff; }
-QLabel#windowTitle { color: #fff6ff; font-size: 14px; font-weight: bold; background: transparent; }
-QLabel#brandTitle { color: #fff6ff; font-family: "Pixelify Sans", "DejaVu Sans Mono", monospace;
- font-size: 18px; background: transparent; }
-QLabel { background: transparent; }
-QLabel#bar { background: #7961aa; color: #ffffff;
- font-size: 14px; font-weight: bold; padding: 9px 10px;
- border: 2px solid #53406f; border-top-color: #cdbcf1; border-left-color: #cdbcf1; }
-QLabel#hero { color: #65417e; font-size: 22px; font-weight: bold; }
-QLabel#muted { color: #705b7e; font-size: 13px; }
-QLabel#hint { color: #655073; font-size: 13px; background: #f9f2fc;
- padding: 9px 11px; border-left: 3px solid #b48acb; }
-QLabel#section { color: #5f4178; font-size: 14px; font-weight: bold; padding: 7px 10px; }
-QLabel#status { color: #27604f; background: #d8f3ec; padding: 7px; border: 2px solid #7fa9a2; }
-QLabel#status[tone="waiting"] { color: #744154; background: #ffe3e9; border-color: #d69eb1; }
-QLabel#status[tone="hidden"] { color: #655074; background: #e6dcf0; border-color: #ad97c2; }
-QLabel#caption { color: #74456e; font-size: 14px; font-weight: bold; padding-top: 9px; padding-bottom: 5px; border-bottom: 1px solid #dec5df; }
-QLabel#value { background: #e6daf5; color: #533770; padding: 4px; font-weight: bold; }
-QLabel#error { color: #a34165; padding: 4px; }
-QLabel#animationPreview { background: transparent; border: 2px solid #7961aa; border-bottom-color: #ffffff; border-right-color: #ffffff; }
-QPushButton { background: #eee5fa; border: 2px solid #70588f; border-top-color: #ffffff;
- border-left-color: #ffffff; padding: 8px 11px; font-weight: normal; min-height: 18px; }
-QPushButton:hover { background: #ffdaef; color: #873e7b; }
-QPushButton:pressed, QPushButton:checked { border-top-color: #70588f; border-left-color: #70588f;
- border-bottom-color: #ffffff; border-right-color: #ffffff; background: #d9c6ef; }
-QPushButton:checked { background: #f3bfdd; color: #59316d; }
-QPushButton#primary { background: #f6b9dc; color: #59316d; border-right-color: #9e587f; border-bottom-color: #9e587f; font-weight: bold; }
-QPushButton#primary:hover { background: #ffc9e7; }
-QPushButton#primary:pressed { background: #e9a3cf; }
-QPushButton:disabled { color: #a08cae; background: #e7def1; }
-QPushButton:focus, QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus { outline: none; border: 2px solid #b05ca5; }
-QComboBox { background: #ffffff; border: 2px solid #927cb0; padding: 7px; min-height: 18px; }
-QComboBox::drop-down { width: 24px; border-left: 2px solid #927cb0; background: #dfd0f1; }
-QComboBox::down-arrow { image: url("@ASSETS@/arrow-down.svg"); width: 10px; height: 6px; }
-QPushButton::menu-indicator { image: url("@ASSETS@/arrow-down.svg"); width: 10px; height: 6px; subcontrol-position: right center; right: 5px; }
-QComboBox QAbstractItemView { background: #fff4fc; selection-background-color: #e6b5e6; selection-color: #382b61; }
-QSpinBox, QDoubleSpinBox { background: #fff4fc; border: 2px solid #927cb0; padding: 5px; min-height: 20px; }
-QSpinBox, QDoubleSpinBox, QLabel#value { font-family: "DejaVu Sans Mono", monospace; font-size: 14px; }
-QSpinBox:disabled { background: #e1d7ec; color: #9685aa; }
-QLineEdit, QPlainTextEdit { background: #fff4fc; border: 2px solid #927cb0; padding: 7px; }
-QListWidget { background: #fff4fc; border: 2px solid #927cb0; padding: 4px; }
-QListWidget::item { padding: 4px; }
-QListWidget::item:selected { background: #d7b8e9; color: #382b61; }
-QTabWidget::pane { border: 2px solid #927cb0; background: #fff4fc; top: -1px; }
-QTabBar::tab { background: #dcd0ed; border: 2px solid #927cb0; border-top-color: #ffffff;
- border-left-color: #ffffff; padding: 8px 10px; }
-QTabBar::tab:selected { background: #f6c4e1; color: #59316d; border-bottom-color: #f6c4e1; }
-QTabBar::tab:hover { background: #ffdaef; }
-QSlider { background: transparent; min-height: 26px; }
-QSlider::groove:horizontal { height: 8px; background: #d9ccea; border: 1px solid #9c86b6; }
-QSlider::sub-page:horizontal { background: #b39bdb; border: 1px solid #9c86b6; }
-QSlider::handle:horizontal { width: 14px; margin: -5px 0; background: #f5b8dc;
- border: 2px solid #72548d; border-top-color: #ffffff; border-left-color: #ffffff; }
-QCheckBox { spacing: 9px; padding: 5px 0; }
-QCheckBox::indicator { width: 15px; height: 15px; background: #ffffff; border: 2px solid #947cad; }
-QCheckBox::indicator:checked { background: #f9d6ec; border: 2px solid #947cad; image: url("@ASSETS@/check.svg"); }
-QCheckBox::indicator:disabled { background: #e1d7ec; border-color: #b1a1c3; }
+QWidget#panel { background: #fff7fd; border: 1px solid #79548c; }
+QWidget#panelHeader { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #efd7f7,stop:1 #ffe5f3); border: none; border-bottom: 1px solid #ac7ab4; }
+QWidget#panelBody { background: #fff7fd; border: none; }
+QWidget#titlebar { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #ffc0e0,stop:0.55 #edc8f6,stop:1 #d1bbef);
+ border: 1px solid #79548c; border-top: 2px solid #fffaff; border-left: 2px solid #fffaff; border-bottom: 2px solid #9970a9; }
+QLabel { background: transparent; border: none; }
+QLabel#windowTitle { color: #4c2c61; font-family: "Pixeloid Sans", "DejaVu Sans", sans-serif; font-size: 18px; }
+QLabel#brandTitle { color: #4c2c61; font-family: "Pixelify Sans", "DejaVu Sans", sans-serif; font-size: 18px; }
+QLabel#bar { background: #f6c7e6; color: #4c2c61; font-family: "Pixeloid Sans"; font-size: 18px;
+ padding: 8px 10px; border: 1px solid #79548c; border-top: 2px solid #ffffff; border-left: 2px solid #ffffff; }
+QLabel#hero { color: #6e4386; font-family: "Pixeloid Sans", "DejaVu Sans", sans-serif; font-size: 27px; }
+QLabel#muted { color: #82658d; font-size: 18px; }
+QLabel#hint { font-size: 18px; color: #705481; background: #fff8fe; padding: 8px 10px; border: 1px solid #c7a5d5; border-left: 4px solid #dc9dc3; }
+QLabel#section { color: #634076; font-family: "Pixeloid Sans", "DejaVu Sans", sans-serif; padding: 6px 6px; }
+QLabel#status { color: #456e70; background: #e6f9f6; padding: 6px 10px; border: 1px solid #84b7ad; border-bottom: 2px solid #84b7ad; }
+QLabel#status[tone="waiting"] { color: #965578; background: #fff0f6; border-color: #d89fbd; }
+QLabel#status[tone="hidden"] { color: #80628e; background: #f0e5f7; border-color: #b99bc9; }
+QLabel#caption { color: #ad4e87; font-family: "Pixeloid Sans"; padding-top: 9px; padding-bottom: 4px; border-bottom: 1px dotted #d8afd6; }
+QLabel#value { background: #f0e0fa; color: #6b4085; padding: 4px 6px; border: 1px solid #b798ca; }
+QLabel#error { color: #ac3868; padding: 4px; }
+QLabel#animationPreview { background: transparent; border: 2px solid #ad8abf; border-top-color: #765386; border-left-color: #765386; border-bottom-color: #ffffff; border-right-color: #ffffff; }
+QPushButton { background: #f2e5fa; border: 2px solid #ac88bf; border-top-color: #ffffff; border-left-color: #ffffff;
+ padding: 7px 10px; min-height: 17px; }
+QPushButton:hover { background: #ffe4f2; color: #914676; border-right-color: #995d91; border-bottom-color: #995d91; }
+QPushButton:pressed, QPushButton:checked { background: #e4c9f1; border-top-color: #90679e; border-left-color: #90679e; border-bottom-color: #ffffff; border-right-color: #ffffff; }
+QPushButton:checked { background: #f5c7e4; color: #6c3964; }
+QPushButton#primary { background: #f9c9e5; color: #743d72; font-weight: bold; border-bottom-color: #af679b; border-right-color: #af679b; }
+QPushButton#primary:hover { background: #ffd9ee; }
+QPushButton#primary:pressed { background: #eeb5d9; border-top-color: #af679b; border-left-color: #af679b; border-bottom-color: #ffffff; border-right-color: #ffffff; }
+QPushButton:disabled { color: #b49ac1; background: #f0e5f6; }
+QPushButton:focus { outline: 1px dotted #865493; outline-offset: -5px; }
+QComboBox, QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox { background: #fffbff;
+ border: 2px solid #dbc4e8; border-top-color: #a07cb5; border-left-color: #a07cb5; padding: 6px; min-height: 17px; selection-background-color: #f1c4e4; selection-color: #4c2c61; }
+QComboBox:focus, QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #bf83b0; }
+QComboBox { padding-right: 28px; }
+QComboBox::drop-down { width: 22px; margin: 1px; border: 1px solid #a07cb5; border-top-color: #ffffff; border-left-color: #ffffff; background: #eddef7; }
+QComboBox::down-arrow, QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url("@ASSETS@/arrow-down.svg"); width: 8px; height: 5px; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url("@ASSETS@/arrow-up.svg"); width: 8px; height: 5px; }
+QSpinBox, QDoubleSpinBox { padding-right: 22px; }
+QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button { width: 18px; background: #eddef7; border: 1px solid #b495c7; border-top-color: #ffffff; border-left-color: #ffffff; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; }
+QPushButton::menu-indicator { image: url("@ASSETS@/arrow-down.svg"); width: 8px; height: 5px; subcontrol-position: right center; right: 5px; }
+QComboBox QAbstractItemView { background: #fff7fd; border: 1px solid #9470a5; selection-background-color: #f3c7e5; selection-color: #4c2c61; padding: 3px; }
+QListWidget, QTextBrowser { background: #fffaff; border: 2px solid #d8c1e7; border-top-color: #a07cb5; border-left-color: #a07cb5; padding: 4px; }
+QListWidget::item { padding: 6px; }
+QListWidget::item:selected { background: #efd0ed; color: #4c2c61; }
+QListWidget::item:hover { background: #f8e6f4; }
+QTabWidget::pane { border: 1px solid #9773aa; border-top: 2px solid #ffffff; background: #f8effb; top: -1px; }
+QTabBar::tab { background: #e7d4f2; border: 1px solid #a580b8; border-top: 2px solid #ffffff;
+ border-left: 2px solid #ffffff; padding: 8px 5px; margin-right: 1px; }
+QTabBar::tab:selected { background: #fff5fc; color: #8f477b; border-bottom-color: #fff5fc; border-top-color: #e98bbf; }
+QTabBar::tab:hover { background: #ffe3f2; }
+QSlider { background: transparent; min-height: 25px; }
+QSlider::groove:horizontal { height: 6px; background: #e6d4f1; border: 1px solid #a385b8; border-bottom-color: #ffffff; }
+QSlider::sub-page:horizontal { background: #d8b9eb; }
+QSlider::handle:horizontal { width: 13px; margin: -6px 0; background: #f5c0df; border: 2px solid #9b739f; border-top-color: #ffffff; border-left-color: #ffffff; }
+QCheckBox { spacing: 8px; padding: 5px 0; }
+QCheckBox::indicator { width: 15px; height: 15px; background: #fffbff; border: 2px solid #d8c1e7; border-top-color: #9e7cb1; border-left-color: #9e7cb1; }
+QCheckBox::indicator:checked { background: #fff0fa; image: url("@ASSETS@/check.svg"); }
+QCheckBox::indicator:disabled { background: #eadff1; border-color: #c2adc9; }
 QScrollArea { background: transparent; border: none; }
-QScrollBar:vertical { background: #ded1ef; width: 12px; margin: 0; }
-QScrollBar::handle:vertical { background: #ad95cc; min-height: 24px; border: 2px solid #eee5fa; }
+QScrollBar:vertical { background: #f5eafa; width: 14px; margin: 0; border: 1px solid #d5bbdf; }
+QScrollBar::handle:vertical { background: #dfc7ef; min-height: 24px; border: 2px solid #a889bb; border-top-color: #ffffff; border-left-color: #ffffff; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-QMenu { background: #fff4fc; border: 2px solid #7961aa; padding: 4px; }
-QMenu::item { padding: 8px 18px; }
-QMenu::item:selected { background: #ead0f0; }
-QMenu::item:disabled { color: #a08cae; }
-QToolTip { background: #fff4fc; color: #382b61; border: 1px solid #7961aa; padding: 6px; font-size: 14px; }
+QMenu { background: #fff6fc; border: 1px solid #79548c; padding: 4px; }
+QMenu::item { padding: 7px 20px; }
+QMenu::item:selected { background: #efd0ed; color: #6c3964; }
+QMenu::item:disabled { color: #b49ac1; }
+QMenu::separator { height: 1px; background: #ddbfdf; margin: 4px 8px; }
+QMenuBar { background: #f8eafb; color: #775087; border: none; border-bottom: 1px solid #c9a8d8; padding: 2px 3px; }
+QMenuBar::item { background: transparent; padding: 4px 8px; }
+QMenuBar::item:selected { background: #efd0ed; }
+QMenuBar::item:pressed { background: #e5bfe2; }
+QToolTip { background: #fff9fe; color: #573769; border: 1px solid #a17ab4; padding: 6px; font-size: 18px; }
+QSizeGrip { background: transparent; width: 14px; height: 14px; }
 '''
 
 
 @lru_cache(maxsize=1)
 def _load_pixel_font():
-    return QFontDatabase.addApplicationFont(str(Path(__file__).parent / 'assets/fonts/PixelifySans.ttf'))
+    folder = Path(__file__).parent / 'assets/fonts'
+    return tuple(QFontDatabase.addApplicationFont(str(folder / name)) for name in
+                 ('PixelifySans.ttf', 'PixeloidSans.ttf', 'PixeloidSans-Bold.ttf'))
 
 
 def apply_theme(widget):
     _load_pixel_font()
-    font = QFont('DejaVu Sans Mono')
-    font.setPixelSize(14)
+    font = QFont('Pixeloid Sans')
+    font.setPixelSize(18)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
     widget.setFont(font)
-    widget.setStyleSheet(THEME.replace('@ASSETS@', (Path(__file__).parent / 'assets').as_posix()))
+    appearance().register(widget)
+    widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+    widget.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+    if not hasattr(widget, '_pixel_chrome'):
+        widget._pixel_chrome = _WindowChrome(widget)
+
+
+def apply_theme_colors(widget):
+    stylesheet = themed_stylesheet(THEME).replace('@ASSETS@', (Path(__file__).parent / 'assets').as_posix())
+    if appearance().theme != 'light':
+        for name in ('arrow-down', 'arrow-up', 'check'):
+            stylesheet = stylesheet.replace(name + '.svg', name + '-dark.svg')
+    widget.setStyleSheet(stylesheet)
+    for menu in widget.findChildren(QMenu):
+        menu.setStyleSheet('')
+    for tabs in widget.findChildren(PixelTabs):
+        for index in range(tabs.count()):
+            tabs.tabInserted(index)
+    for label in widget.findChildren(QLabel):
+        kind = label.property('pixelGlyph')
+        if kind:
+            label.setPixmap(pixel_icon(kind).pixmap(14, 14))
+    widget.update()
+    for child in widget.findChildren(QWidget):
+        child.update()
+
+
+class _WindowChrome(QObject):
+    """Keep a real resize grip for the decorated, resizable top-level window."""
+    def __init__(self, window):
+        super().__init__(window)
+        self.grip = QSizeGrip(window)
+        self.grip.setToolTip('Изменить размер окна')
+        self.grip.setFixedSize(14, 14)
+        window.installEventFilter(self)
+
+    def eventFilter(self, window, event):
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show, QEvent.Type.WindowStateChange):
+            self.grip.move(window.width() - 16, window.height() - 16)
+            self.grip.setVisible(not window.isMaximized())
+            self.grip.raise_()
+        return False
 
 
 class SystemHeading(QLabel):
@@ -107,25 +158,23 @@ class SystemHeading(QLabel):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setFont(self.font())
-        painter.setPen(QColor('#fff7ff'))
+        painter.setPen(QColor(theme_color('#fff7ff')))
         painter.drawText(self.contentsRect().translated(1, 1), self.alignment(), self.text())
         painter.setPen(self.palette().windowText().color())
         painter.drawText(self.contentsRect(), self.alignment(), self.text())
 
 
-@lru_cache(maxsize=2)
-def _tile(checker=False):
+@lru_cache(maxsize=6)
+def _tile(checker=False, theme='light'):
     image = QPixmap(24, 24)
-    image.fill(QColor('#fbf2fc' if checker else '#f4ecfa'))
+    image.fill(QColor(theme_color('#fff8fe' if checker else '#f8effb', theme)))
     painter = QPainter(image)
     if checker:
-        painter.fillRect(0, 0, 12, 12, QColor('#e9daf2'))
-        painter.fillRect(12, 12, 12, 12, QColor('#e9daf2'))
+        painter.fillRect(0, 0, 12, 12, QColor(theme_color('#ecdaf5', theme)))
+        painter.fillRect(12, 12, 12, 12, QColor(theme_color('#ecdaf5', theme)))
     else:
-        painter.setPen(QColor('#e8dff1'))
-        painter.drawLine(0, 0, 23, 0)
-        painter.drawLine(0, 0, 0, 23)
-        painter.fillRect(0, 0, 2, 2, QColor('#dac9e8'))
+        painter.fillRect(1, 1, 1, 1, QColor(theme_color('#e9d7f2', theme)))
+        painter.fillRect(13, 13, 1, 1, QColor(theme_color('#eddcf4', theme)))
     painter.end()
     return image
 
@@ -134,7 +183,7 @@ class PixelSurface(QWidget):
     """A cached desktop grid, painted only when the widget needs repainting."""
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.drawTiledPixmap(event.rect(), _tile())
+        painter.drawTiledPixmap(event.rect(), _tile(False, appearance().theme))
 
 
 class PixelPreview(QLabel):
@@ -145,7 +194,7 @@ class PixelPreview(QLabel):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.drawTiledPixmap(event.rect(), _tile(True))
+        painter.drawTiledPixmap(event.rect(), _tile(True, appearance().theme))
         painter.end()
         super().paintEvent(event)
 
@@ -167,7 +216,21 @@ class PixelTabs(QTabWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        tab_font = QFont('Pixeloid Sans')
+        tab_font.setPixelSize(18)
+        tab_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, -1)
+        tab_font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+        self.tabBar().setFont(tab_font)
         self.currentChanged.connect(lambda *_: self.updateGeometry())
+
+    def tabInserted(self, index):
+        super().tabInserted(index)
+        icons = {'Чибики': 'heart', 'Облик': 'portrait', 'Движение': 'motion',
+                 'Экран': 'screen', 'Управление': 'settings', 'Анимация': 'film', 'Набор': 'folder'}
+        kind = icons.get(self.tabText(index))
+        if kind:
+            self.setTabIcon(index, pixel_icon(kind))
+            self.setIconSize(QSize(14, 14))
 
     def sizeHint(self):
         page = self.currentWidget()
@@ -213,22 +276,147 @@ class _Hearts(QWidget):
                         painter.fillRect(offset + x * 2, 4 + y * 2, 2, 2, QColor(color))
 
 
+def pixel_icon(kind):
+    return _pixel_icon(kind, appearance().theme)
+
+
+@lru_cache(maxsize=48)
+def _pixel_icon(kind, theme):
+    """Original small UI symbols on a seven-pixel grid; no external icon theme."""
+    patterns = {
+        'heart': ('0110110', '1111111', '1111111', '0111110', '0011100', '0001000', '0000000'),
+        'portrait': ('1111111', '1000001', '1011101', '1010101', '1001001', '1011101', '1111111'),
+        'motion': ('0010000', '0111110', '1110000', '0111111', '0010010', '0000100', '0001000'),
+        'screen': ('1111111', '1000001', '1010101', '1000001', '1111111', '0001000', '0011100'),
+        'settings': ('0100010', '1110111', '0100010', '0100010', '0100010', '1110111', '0100010'),
+        'film': ('1111111', '1010101', '1111111', '1000001', '1111111', '1010101', '1111111'),
+        'folder': ('1110000', '1011111', '1000001', '1000001', '1000001', '1000001', '1111111'),
+    }
+    pixmap = QPixmap(14, 14)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    for y, row in enumerate(patterns[kind]):
+        for x, value in enumerate(row):
+            if value == '1':
+                painter.fillRect(x * 2, y * 2, 2, 2, QColor(theme_color('#ad4e87' if kind == 'heart' else '#6e4386', theme)))
+    painter.end()
+    return QIcon(pixmap)
+
+
+class _WindowButton(QAbstractButton):
+    def __init__(self, kind, parent):
+        super().__init__(parent)
+        self.kind = kind
+        self.setFixedSize(24, 24)
+        title = {'minimize': 'Свернуть', 'maximize': 'Развернуть / восстановить', 'close': 'Закрыть окно'}[kind]
+        self.setToolTip(title)
+        self.setAccessibleName(title)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(theme_color('#ffd9ec' if self.underMouse() else '#f7eafa')))
+        p.setPen(QColor(theme_color('#8a619d')))
+        p.drawRect(0, 0, 23, 23)
+        p.setPen(QColor(theme_color('#926a9f' if self.isDown() else '#ffffff')))
+        p.drawLine(1, 1, 22, 1)
+        p.drawLine(1, 1, 1, 22)
+        p.setPen(QColor(theme_color('#ffffff' if self.isDown() else '#b894c8')))
+        p.drawLine(2, 22, 22, 22)
+        p.drawLine(22, 2, 22, 22)
+        p.translate(1 if self.isDown() else 0, 1 if self.isDown() else 0)
+        ink = QColor(theme_color('#774979'))
+        if self.kind == 'minimize':
+            p.fillRect(6, 15, 11, 2, ink)
+        elif self.kind == 'maximize':
+            p.fillRect(6, 6, 12, 3, ink)
+            p.setPen(ink)
+            p.drawRect(6, 6, 11, 11)
+        else:
+            for i in range(5):
+                p.fillRect(6 + i * 2, 6 + i * 2, 2, 2, ink)
+                p.fillRect(14 - i * 2, 6 + i * 2, 2, 2, ink)
+        if self.hasFocus():
+            p.setPen(QPen(ink, 1, Qt.PenStyle.DotLine))
+            p.drawRect(3, 3, 17, 17)
+
+
+class WindowBar(QWidget):
+    def __init__(self, title, *, brand=False):
+        super().__init__()
+        self.setObjectName('titlebar')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(6, 4, 4, 4)
+        row.setSpacing(4)
+        icon = QLabel()
+        icon.setPixmap(bunny_frame().copy(2, 0, 28, 26).scaled(26, 26, Qt.AspectRatioMode.KeepAspectRatio,
+                                                             Qt.TransformationMode.FastTransformation))
+        row.addWidget(icon)
+        self.label = QLabel(title)
+        self.label.setObjectName('brandTitle' if brand else 'windowTitle')
+        self.label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.label.setToolTip(title)
+        row.addWidget(self.label, 1)
+        if brand:
+            row.addWidget(_Hearts())
+        self.buttons = {}
+        for kind in ('minimize', 'maximize', 'close'):
+            button = _WindowButton(kind, self)
+            button.clicked.connect(lambda _checked=False, action=kind: self.perform(action))
+            row.addWidget(button)
+            self.buttons[kind] = button
+        for child in (icon, self.label):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drag = None
+
+    def setText(self, title):
+        self.label.setText(title)
+        self.label.setToolTip(title)
+
+    def text(self):
+        return self.label.text()
+
+    def perform(self, action):
+        window = self.window()
+        if action == 'close':
+            window.close()
+        elif action == 'minimize':
+            window.showMinimized()
+        elif window.isMaximized():
+            window.showNormal()
+        else:
+            window.showMaximized()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self.window().windowHandle()
+            if not handle or not handle.startSystemMove():
+                self._drag = event.globalPosition().toPoint() - self.window().pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(event.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, event):
+        self._drag = None
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.perform('maximize')
+
+
 def window_bar(title, *, brand=False):
-    bar = QWidget()
-    bar.setObjectName('titlebar')
-    row = QHBoxLayout(bar)
-    row.setContentsMargins(8, 5, 8, 5)
-    icon = QLabel()
-    icon.setPixmap(bunny_frame().copy(2, 0, 28, 26).scaled(26, 26, Qt.AspectRatioMode.KeepAspectRatio,
-                                                         Qt.TransformationMode.FastTransformation))
-    row.addWidget(icon)
-    label = QLabel(title)
-    label.setObjectName('brandTitle' if brand else 'windowTitle')
-    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-    label.setToolTip(title)
-    row.addWidget(label, 1)
-    row.addWidget(_Hearts())
-    return bar
+    return WindowBar(title, brand=brand)
 
 
 def bunny_frame(step=0, state='idle', elapsed=0.0):
@@ -315,22 +503,22 @@ class Preview(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor('#e4d6f4'))
+        p.fillRect(self.rect(), QColor(theme_color('#e4d6f4')))
         # Desktop grid, with a tiny pixel meadow at the bottom.
-        p.setPen(QColor('#d4c3e9'))
+        p.setPen(QColor(theme_color('#d4c3e9')))
         for x in range(0, self.width(), 16):
             p.drawLine(x, 0, x, self.height())
         for y in range(0, self.height(), 16):
             p.drawLine(0, y, self.width(), y)
-        p.fillRect(0, self.height() - 16, self.width(), 16, QColor('#b8dcd9'))
-        p.fillRect(0, self.height() - 18, self.width(), 2, QColor('#739caa'))
+        p.fillRect(0, self.height() - 16, self.width(), 16, QColor(theme_color('#b8dcd9')))
+        p.fillRect(0, self.height() - 18, self.width(), 2, QColor(theme_color('#739caa')))
         pet = getattr(self.controller, 'pet', None)
         frame = bunny_frame()
         if pet:
             frame = pet.current_frame()
         scaled = frame.scaled(112, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
         p.drawPixmap((self.width() - scaled.width()) // 2, self.height() - 18 - scaled.height(), scaled)
-        p.setPen(QColor('#8d70ad'))
+        p.setPen(QColor(theme_color('#8d70ad')))
         p.drawText(12, 22, '+')
         p.drawText(self.width() - 28, 44, '+')
 
@@ -344,18 +532,19 @@ def panel(title):
     header = QWidget()
     header.setObjectName('panelHeader')
     header_layout = QHBoxLayout(header)
-    header_layout.setContentsMargins(0, 0, 8, 0)
+    header_layout.setContentsMargins(8, 0, 8, 0)
+    icon = QLabel()
+    icon.setProperty('pixelGlyph', 'folder')
+    icon.setPixmap(pixel_icon('folder').pixmap(14, 14))
+    header_layout.addWidget(icon)
     label = QLabel(title)
     label.setObjectName('section')
     header_layout.addWidget(label, 1)
-    mark = QLabel('◆')
-    mark.setStyleSheet('color: #a177b0; background: transparent; border: none;')
-    header_layout.addWidget(mark)
     outer.addWidget(header)
     body = QWidget()
     body.setObjectName('panelBody')
     layout = QVBoxLayout(body)
-    layout.setContentsMargins(14, 12, 14, 14)
-    layout.setSpacing(10)
+    layout.setContentsMargins(14, 14, 14, 14)
+    layout.setSpacing(11)
     outer.addWidget(body)
     return widget, layout

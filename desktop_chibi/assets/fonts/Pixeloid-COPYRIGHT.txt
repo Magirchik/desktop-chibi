@@ -1,0 +1,3 @@
+Pixeloid Sans © 2020–2022 GGBotNet.
+Unmodified font, licensed under SIL OFL 1.1; see Pixeloid-OFL.txt.
+Source: https://github.com/MixaDoDs/AngelOS-Dotfiles/tree/main/.local/share/fonts/pixel

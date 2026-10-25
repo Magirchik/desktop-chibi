@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout,
 )
 from .event_adapters import NotificationAdapter
-from .pixel_ui import apply_theme
+from .pixel_ui import apply_theme, window_bar
 
 
 def installed_applications():
@@ -86,8 +86,7 @@ class NotificationPicker(QDialog):
         self.entries = installed_applications()
         self.probe = None
         layout = QVBoxLayout(self)
-        bar = QLabel(' +  УВЕДОМЛЕНИЯ / ВЫБОР ПРИЛОЖЕНИЯ')
-        bar.setObjectName('bar')
+        bar = window_bar('Приложение для уведомлений')
         layout.addWidget(bar)
         note = QLabel('Выберите установленное приложение или файл программы. Это подставит предполагаемое имя. '
                       'Для точного совпадения используйте «Поймать уведомление» ниже: путь к программе в самом уведомлении не передаётся.')

@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -129,6 +130,7 @@ class DesktopControlsTests(unittest.TestCase):
         self.controls.stop_shortcuts()
         self.assertFalse(self.settings.store.value('portal_shortcuts_enabled', True, type=bool))
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux portal integration')
     def test_repeated_configure_opens_settings_without_replacing_shortcut_session(self):
         session = object()
         self.controls.shortcut_client = session
@@ -145,6 +147,7 @@ class DesktopControlsTests(unittest.TestCase):
         finally:
             self.controls.shortcut_client = None
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux portal integration')
     def test_repeated_configure_reports_settings_launch_failure_and_keeps_session(self):
         session = object()
         self.controls.shortcut_client = session
@@ -156,6 +159,7 @@ class DesktopControlsTests(unittest.TestCase):
         finally:
             self.controls.shortcut_client = None
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux portal integration')
     def test_start_and_stop_use_in_process_client_without_spawning_worker(self):
         from desktop_chibi.portal_shortcuts import PortalShortcuts
         with patch.object(PortalShortcuts, 'start') as start, \
@@ -169,6 +173,7 @@ class DesktopControlsTests(unittest.TestCase):
         self.assertIsNone(self.controls.shortcut_client)
         self.assertTrue(client.stopped)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux portal integration')
     def test_portal_error_releases_client_and_allows_retry(self):
         from desktop_chibi.portal_shortcuts import PortalShortcuts
         with patch.object(PortalShortcuts, 'start'):

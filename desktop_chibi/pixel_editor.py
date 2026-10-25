@@ -1,5 +1,7 @@
 """In-app pixel drawing and frame animation, without modifying source assets."""
 import time
+from bisect import bisect_right
+from itertools import accumulate
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
@@ -9,7 +11,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QMessageBox, QPushButton, QScrollArea, QSpinBox, QMenu,
     QVBoxLayout, QWidget,
 )
-from .pixel_ui import apply_theme, PixelSurface, PixelPreview, window_bar
+from .pixel_ui import apply_theme, PixelSurface, PixelPreview, window_bar, _tile
+from .appearance import appearance, theme_color
 from .pixel_document import PixelDocument, blank_image
 from .animations import frame_index
 
@@ -42,20 +45,19 @@ class PixelCanvas(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        cell = max(4, self.zoom)
-        for y in range(event.rect().top() // cell * cell, event.rect().bottom() + 1, cell):
-            for x in range(event.rect().left() // cell * cell, event.rect().right() + 1, cell):
-                p.fillRect(x, y, cell, cell, QColor('#f8f0fc' if (x // cell + y // cell) % 2 else '#dfd1ed'))
+        p.drawTiledPixmap(event.rect(), _tile(True, appearance().theme))
         if self.onion and self.document.index > 0:
             p.setOpacity(.25)
             p.drawImage(self.rect(), self.document.composite(self.document.index - 1))
             p.setOpacity(1)
         p.drawImage(self.rect(), self.document.composite(self.document.index))
         if self.grid and self.zoom >= 5:
-            p.setPen(QPen(QColor(110, 80, 145, 55)))
-            for x in range(0, self.width(), self.zoom):
+            grid_color = QColor(theme_color('#9e7cb1'))
+            grid_color.setAlpha(90)
+            p.setPen(QPen(grid_color))
+            for x in range(event.rect().left() // self.zoom * self.zoom, event.rect().right() + 1, self.zoom):
                 p.drawLine(x, 0, x, self.height())
-            for y in range(0, self.height(), self.zoom):
+            for y in range(event.rect().top() // self.zoom * self.zoom, event.rect().bottom() + 1, self.zoom):
                 p.drawLine(0, y, self.width(), y)
 
     def pixel(self, event):
@@ -94,6 +96,7 @@ class PixelCanvas(QWidget):
 
     def mouseReleaseEvent(self, event):
         self.previous = None
+        self.document.prune_history()
 
 
 class PixelEditor(QDialog):
@@ -108,6 +111,8 @@ class PixelEditor(QDialog):
         self.started = time.monotonic()
         self.playing = True
         self.preview_key = None
+        self.thumbnail_keys = {}
+        self._timing_key = None
         self.setMinimumSize(680, 520)
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -120,7 +125,7 @@ class PixelEditor(QDialog):
         root = QVBoxLayout(content)
         root.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
         bar = window_bar('Редактор кадров' if title == 'Рисование анимации' else f'Кадры: {title}')
-        root.addWidget(bar)
+        outer.insertWidget(0, bar)
         body = QHBoxLayout()
         left = QVBoxLayout()
         tools = QHBoxLayout()
@@ -200,6 +205,7 @@ class PixelEditor(QDialog):
         self.fps.setRange(1, 60)
         self.fps.setValue(self.document.fps)
         self.fps.valueChanged.connect(self.change_fps)
+        self.fps.setToolTip('Изменение FPS заменяет исходные задержки GIF равномерной скоростью.')
         fps_row.addWidget(self.fps)
         right.addLayout(fps_row)
         self.pingpong = QCheckBox('Туда и обратно')
@@ -295,7 +301,7 @@ class PixelEditor(QDialog):
         history.addWidget(help_button)
         history.addStretch()
         self.size_choice = QComboBox()
-        for size in (16, 24, 32, 48, 64, 96, 128):
+        for size in (16, 24, 32, 48, 64, 96, 128, 256, 512):
             self.size_choice.addItem(f'{size}×{size}', size)
         self.size_choice.setCurrentIndex(2)
         history.addWidget(self.size_choice)
@@ -308,11 +314,24 @@ class PixelEditor(QDialog):
         self.info.setObjectName('muted')
         self.info.setWordWrap(True)
         root.addWidget(self.info)
+        output = QHBoxLayout()
+        output.addWidget(QLabel('Размер для чибика'))
+        self.output_size = QComboBox()
+        for label, value in [('Авто', 0), ('Исходный', -1), ('512 пкс', 512), ('256 пкс', 256), ('128 пкс', 128)]:
+            self.output_size.addItem(label, value)
+        self.output_size.setToolTip('Сжатие только при сохранении в мастерскую. Проект слоёв остаётся в исходном разрешении. Авто укладывает анимацию в 32 МиБ.')
+        output.addWidget(self.output_size, 1)
+        root.addLayout(output)
+        self.output_info = QLabel()
+        self.output_info.setObjectName('muted')
+        self.output_info.setWordWrap(True)
+        root.addWidget(self.output_info)
+        self.output_size.currentIndexChanged.connect(self.update_output_info)
         buttons = QDialogButtonBox()
         done = buttons.addButton('Готово — в мастерскую', QDialogButtonBox.ButtonRole.AcceptRole)
         done.setObjectName('primary')
         buttons.addButton('Отмена', QDialogButtonBox.ButtonRole.RejectRole)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self.finish)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
         self.install_shortcuts()
@@ -444,16 +463,21 @@ class PixelEditor(QDialog):
 
     def mutate(self, callback):
         self.canvas.previous = None
-        callback()
+        try:
+            callback()
+        except ValueError as error:
+            QMessageBox.warning(self, 'Размер анимации', str(error))
+            return
+        self.document.prune_history()
         self.canvas.resize_canvas()
         self.refresh()
 
     def refresh(self, all_frames=True):
         self.refresh_layers()
-        frames = self.document.frames
         self.timeline.blockSignals(True)
         if self.timeline.count() != self.document.count:
             self.timeline.clear()
+            self.thumbnail_keys.clear()
             for index in range(self.document.count):
                 self.timeline.addItem(QListWidgetItem(str(index + 1)))
             indices = range(self.document.count)
@@ -461,7 +485,11 @@ class PixelEditor(QDialog):
             # Undo/reorder may affect more than the selected image.
             indices = range(self.document.count) if all_frames else [self.document.index]
         for index in indices:
-            self.timeline.item(index).setIcon(QIcon(QPixmap.fromImage(frames[index])))
+            image = self.document.composite(index)
+            if self.thumbnail_keys.get(index) != image.cacheKey():
+                thumbnail = image.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+                self.timeline.item(index).setIcon(QIcon(QPixmap.fromImage(thumbnail)))
+                self.thumbnail_keys[index] = image.cacheKey()
         self.timeline.setCurrentRow(self.document.index)
         self.timeline.blockSignals(False)
         self.timeline.scrollToItem(self.timeline.currentItem())
@@ -491,7 +519,24 @@ class PixelEditor(QDialog):
 
     def update_frame_info(self):
         image = self.document.image
-        self.info.setText(f'{image.width()} × {image.height()} пкс · Кадр {self.document.index + 1} из {self.document.count}')
+        timing = ' · Ритм GIF' if self.document.delays else ''
+        self.info.setText(f'{image.width()} × {image.height()} пкс · Кадр {self.document.index + 1} из {self.document.count} · {self.document.memory_bytes / 1048576:.1f} МиБ{timing}')
+        self.update_output_info()
+
+    def update_output_info(self, *_):
+        try:
+            size = self.document.export_dimensions(self.output_size.currentData())
+            self.output_info.setText(f'Для чибика: {size.width()}×{size.height()} пкс. Проект слоёв сохранит полный размер.')
+        except ValueError as error:
+            self.output_info.setText(str(error))
+
+    def finish(self):
+        try:
+            self.document.export_dimensions(self.output_size.currentData())
+        except ValueError as error:
+            QMessageBox.warning(self, 'Размер для чибика', str(error))
+            return
+        self.accept()
 
     def sync_frame_controls(self):
         previous = self.document.index > 0
@@ -514,7 +559,19 @@ class PixelEditor(QDialog):
         self.frame_menu.popup(self.timeline.viewport().mapToGlobal(position))
 
     def render_preview(self):
-        index = frame_index(int((time.monotonic() - self.started) * self.document.fps), self.document.count, self.document.pingpong) if self.playing else self.document.index
+        elapsed = max(0, time.monotonic() - self.started)
+        if self.playing and self.document.delays:
+            key = (tuple(self.document.delays), self.document.pingpong)
+            if key != self._timing_key:
+                self._timing_key = key
+                self._timing_order = tuple(range(self.document.count))
+                if self.document.pingpong:
+                    self._timing_order += self._timing_order[-2:0:-1]
+                self._timing_ends = tuple(accumulate(self.document.delays[i] for i in self._timing_order))
+            position = bisect_right(self._timing_ends, elapsed * 1000 % self._timing_ends[-1])
+            index = self._timing_order[min(position, len(self._timing_order) - 1)]
+        else:
+            index = frame_index(int(elapsed * self.document.fps), self.document.count, self.document.pingpong) if self.playing else self.document.index
         image = self.document.composite(index)
         key = image.cacheKey()
         if key == self.preview_key:
@@ -532,12 +589,15 @@ class PixelEditor(QDialog):
 
     def change_fps(self, fps):
         self.document.fps = fps
+        self.document.delays = None
         self.started = time.monotonic()
         self.sync_preview_timer()
+        self.update_frame_info()
 
     def sync_preview_timer(self):
         if self.isVisible() and self.playing:
-            self.timer.start(max(16, round(1000 / self.document.fps)))
+            interval = min(self.document.delays) if self.document.delays else round(1000 / self.document.fps)
+            self.timer.start(max(16, interval))
         else:
             self.timer.stop()
 

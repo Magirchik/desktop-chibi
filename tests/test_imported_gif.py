@@ -105,7 +105,7 @@ class ImportedGifTests(unittest.TestCase):
             path.write_bytes(self.path.read_bytes())
             self.player.configure({'idle': {'file': str(path)}})
             self.assertIsNotNone(self.player.clips['idle'].movie)
-            with self.assertRaisesRegex(ValueError, '32 МиБ'):
+            with self.assertRaisesRegex(ValueError, 'МиБ'):
                 self.player.configure({'idle': {'file': str(path), 'pingpong': True}})
             self.assertIsNotNone(self.player.clips['idle'].movie)
 

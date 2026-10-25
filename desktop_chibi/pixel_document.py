@@ -2,10 +2,16 @@
 import base64
 import json
 import math
+from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QImage, QPainter, QTransform
+from PySide6.QtGui import QImage, QImageReader, QPainter, QTransform
+
+MAX_DIMENSION = 512
+EDITOR_BYTES = 64 * 1024 * 1024
+HISTORY_BYTES = 24 * 1024 * 1024
+COMPOSITE_BYTES = 4 * 1024 * 1024
 
 
 def blank_image(width, height):
@@ -15,20 +21,71 @@ def blank_image(width, height):
 
 
 class PixelDocument:
-    def __init__(self, frames=None, width=32, height=32, fps=8):
+    def __init__(self, frames=None, width=32, height=32, fps=8, delays=None):
+        if frames:
+            size = frames[0].size()
+            if not 1 <= len(frames) <= 512 or any(image.size() != size or image.isNull() for image in frames):
+                raise ValueError('Нужно от 1 до 512 одинаковых непустых кадров.')
+            width, height = size.width(), size.height()
+        if not 1 <= width <= MAX_DIMENSION or not 1 <= height <= MAX_DIMENSION:
+            raise ValueError('Редактор поддерживает кадры размером до 512×512.')
+        if width * height * 4 * (len(frames) if frames else 1) > EDITOR_BYTES:
+            raise ValueError('Кадры занимают больше 64 МиБ. Выберите меньший размер или часть анимации.')
         images = [image.convertToFormat(QImage.Format.Format_ARGB32) for image in frames] if frames else [blank_image(width, height)]
         if len(images) > 512 or any(image.isNull() for image in images):
             raise ValueError('Нужно от 1 до 512 непустых кадров.')
         size = images[0].size()
-        if max(size.width(), size.height()) > 256 or any(image.size() != size for image in images):
-            raise ValueError('Редактор поддерживает одинаковые кадры размером до 256×256.')
         self.layers = [dict(name='Основа', shared=False, visible=True, locked=False, images=images)]
         self.layer_index = self.index = 0
         self.count = len(images)
         self.fps = max(1, min(60, int(fps)))
         self.pingpong = False
+        self.delays = self.validate_delays(delays, len(images))
         self.undo_stack, self.redo_stack = [], []
-        self._cache = {}
+        self._cache = OrderedDict()
+
+    @staticmethod
+    def validate_delays(delays, count):
+        if delays is None:
+            return None
+        if not isinstance(delays, (list, tuple)) or len(delays) != count or any(type(d) is not int or not 10 <= d <= 60000 for d in delays):
+            raise ValueError('Задержки должны соответствовать кадрам и быть от 10 до 60000 мс.')
+        return list(delays)
+
+    @property
+    def memory_bytes(self):
+        return self.image.width() * self.image.height() * 4 * sum(len(layer['images']) for layer in self.layers)
+
+    def check_capacity(self, extra_images):
+        if self.memory_bytes + self.image.width() * self.image.height() * 4 * extra_images > EDITOR_BYTES:
+            raise ValueError('Слои и кадры достигли 64 МиБ. Уменьшите холст или удалите лишние кадры / слои.')
+
+    def export_dimensions(self, max_size=0):
+        size = self.image.size()
+        side = max(size.width(), size.height()) if max_size == 0 else max_size
+        def scaled(value):
+            return size.scaled(value, value, Qt.AspectRatioMode.KeepAspectRatio) if value > 0 and max(size.width(), size.height()) > value else size
+        output = scaled(side)
+        if max_size == 0:
+            while output.width() * output.height() * self.count * 4 > 32 * 1024 * 1024:
+                side = max(1, side // 2)
+                output = scaled(side)
+        if output.width() * output.height() * self.count * 4 > 32 * 1024 * 1024:
+            raise ValueError('Анимация для чибика превышает 32 МиБ. Выберите «Авто» или меньший размер для чибика.')
+        return output
+
+    def prune_history(self):
+        active = {image.cacheKey() for layer in self.layers for image in layer['images']}
+        def history_cost():
+            images = {image.cacheKey(): image.sizeInBytes() for stack in (self.undo_stack, self.redo_stack)
+                      for snapshot in stack for layer in snapshot[0] for image in layer['images']
+                      if image.cacheKey() not in active}
+            return sum(images.values())
+        while history_cost() > HISTORY_BYTES:
+            stack = self.undo_stack if self.undo_stack else self.redo_stack
+            if not stack:
+                break
+            stack.pop(0)
 
     @property
     def layer(self):
@@ -43,6 +100,10 @@ class PixelDocument:
         return [self.composite(index) for index in range(self.count)]
 
     def composite(self, index):
+        visible = [layer for layer in self.layers if layer['visible']]
+        if len(visible) == 1:
+            layer = visible[0]
+            return QImage(layer['images'][0 if layer['shared'] else index])
         if index not in self._cache:
             result = blank_image(self.image.width(), self.image.height())
             painter = QPainter(result)
@@ -51,6 +112,10 @@ class PixelDocument:
                     painter.drawImage(0, 0, layer['images'][0 if layer['shared'] else index])
             painter.end()
             self._cache[index] = result
+            cost = result.sizeInBytes()
+            while len(self._cache) > max(1, COMPOSITE_BYTES // cost):
+                self._cache.popitem(last=False)
+        self._cache.move_to_end(index)
         return self._cache[index]
 
     def invalidate(self):
@@ -58,16 +123,17 @@ class PixelDocument:
 
     def snapshot(self):
         return ([{**layer, 'images': [QImage(image) for image in layer['images']]} for layer in self.layers],
-                self.index, self.layer_index, self.count)
+                self.index, self.layer_index, self.count, list(self.delays) if self.delays else None)
 
     def restore(self, snapshot):
-        self.layers, self.index, self.layer_index, self.count = snapshot
+        self.layers, self.index, self.layer_index, self.count, self.delays = snapshot
         self.invalidate()
 
     def begin_edit(self):
         self.undo_stack.append(self.snapshot())
         self.undo_stack = self.undo_stack[-50:]
         self.redo_stack.clear()
+        self.prune_history()
 
     def undo(self):
         if self.undo_stack:
@@ -113,19 +179,39 @@ class PixelDocument:
             return
         self.begin_edit()
         self.invalidate()
+        pixels = image.bits().cast('I')
+        width, height = image.width(), image.height()
+        new = color.rgba()
         pending = [(x, y)]
         while pending:
             px, py = pending.pop()
-            if not (0 <= px < image.width() and 0 <= py < image.height()):
+            if pixels[py * width + px] != old:
                 continue
-            if image.pixelColor(px, py).rgba() != old:
-                continue
-            image.setPixelColor(px, py, color)
-            pending.extend(((px - 1, py), (px + 1, py), (px, py - 1), (px, py + 1)))
+            left = px
+            while left > 0 and pixels[py * width + left - 1] == old:
+                left -= 1
+            right = px
+            while right + 1 < width and pixels[py * width + right + 1] == old:
+                right += 1
+            above = below = False
+            for sx in range(left, right + 1):
+                pixels[py * width + sx] = new
+                if py > 0:
+                    match = pixels[(py - 1) * width + sx] == old
+                    if match and not above:
+                        pending.append((sx, py - 1))
+                    above = match
+                if py + 1 < height:
+                    match = pixels[(py + 1) * width + sx] == old
+                    if match and not below:
+                        pending.append((sx, py + 1))
+                    below = match
+        self.prune_history()
 
     def add_layer(self, shared=False):
         if len(self.layers) >= 16:
             return
+        self.check_capacity(1 if shared else self.count)
         self.begin_edit()
         images = [blank_image(self.image.width(), self.image.height()) for _ in range(1 if shared else self.count)]
         self.layer_index += 1
@@ -152,6 +238,8 @@ class PixelDocument:
     def set_layer(self, key, value):
         if self.layer[key] == value:
             return
+        if key == 'shared' and not value:
+            self.check_capacity(self.count - 1)
         self.begin_edit()
         if key == 'shared':
             # Keep the selected pose when joining; fork copies when separating.
@@ -163,13 +251,17 @@ class PixelDocument:
     def add_frame(self, duplicate=False, at_end=False):
         if self.count >= 512:
             return
+        self.check_capacity(sum(not layer['shared'] for layer in self.layers))
         self.begin_edit()
+        delay = self.delays[self.index] if self.delays is not None else None
         target = self.count if at_end else self.index + 1
         for layer in self.layers:
             if not layer['shared']:
                 image = layer['images'][self.index]
                 layer['images'].insert(target, QImage(image) if duplicate else blank_image(image.width(), image.height()))
         self.index = target
+        if self.delays is not None:
+            self.delays.insert(target, delay)
         self.count += 1
         self.invalidate()
 
@@ -179,6 +271,8 @@ class PixelDocument:
             for layer in self.layers:
                 layer['images'] = [blank_image(self.image.width(), self.image.height())]
         else:
+            if self.delays is not None:
+                self.delays.pop(self.index)
             for layer in self.layers:
                 if not layer['shared']:
                     layer['images'].pop(self.index)
@@ -193,6 +287,8 @@ class PixelDocument:
             for layer in self.layers:
                 if not layer['shared']:
                     layer['images'].insert(target, layer['images'].pop(self.index))
+            if self.delays is not None:
+                self.delays.insert(target, self.delays.pop(self.index))
             self.index = target
             self.invalidate()
 
@@ -215,21 +311,31 @@ class PixelDocument:
                     painter.end()
             self.layer['images'][index] = result
         self.invalidate()
+        self.prune_history()
 
     def new_canvas(self, size):
+        if not 1 <= size <= MAX_DIMENSION:
+            raise ValueError('Размер холста: до 512×512.')
         self.begin_edit()
         self.layers = [dict(name='Основа', shared=False, visible=True, locked=False, images=[blank_image(size, size)])]
         self.index = self.layer_index = 0
         self.count = 1
+        self.delays = None
         self.invalidate()
 
-    def sheet(self):
+    def sheet(self, max_size=0):
         width, height = self.image.width(), self.image.height()
+        if max_size and max(width, height) > max_size:
+            size = self.image.size().scaled(max_size, max_size, Qt.AspectRatioMode.KeepAspectRatio)
+            width, height = size.width(), size.height()
         columns = min(16, self.count)
         output = blank_image(columns * width, math.ceil(self.count / columns) * height)
         painter = QPainter(output)
         for index in range(self.count):
-            painter.drawImage((index % columns) * width, (index // columns) * height, self.composite(index))
+            image = self.composite(index)
+            if image.width() != width or image.height() != height:
+                image = image.scaled(width, height, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
+            painter.drawImage((index % columns) * width, (index // columns) * height, image)
         painter.end()
         return output
 
@@ -245,15 +351,15 @@ class PixelDocument:
                 images.append(base64.b64encode(bytes(buffer.data())).decode('ascii'))
             layers.append({key: value for key, value in layer.items() if key != 'images'} | {'images': images})
         Path(path).write_text(json.dumps(dict(version=1, layers=layers, count=self.count, fps=self.fps,
-                                              pingpong=self.pingpong, index=self.index, layer_index=self.layer_index),
+                                              pingpong=self.pingpong, delays=self.delays, index=self.index, layer_index=self.layer_index),
                                          ensure_ascii=False), encoding='utf-8')
 
     @classmethod
     def load_project(cls, path):
         try:
             path = Path(path)
-            if path.stat().st_size > 32 * 1024 * 1024:
-                raise ValueError('Проект слишком большой (максимум 32 МБ).')
+            if path.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError('Проект слишком большой (максимум 128 МиБ).')
             data = json.loads(path.read_text(encoding='utf-8'))
             count, layers = data['count'], data['layers']
             if data['version'] != 1 or not isinstance(count, int) or not 1 <= count <= 512 or not 1 <= len(layers) <= 16:
@@ -261,6 +367,7 @@ class PixelDocument:
             result = cls()
             size = None
             decoded = []
+            cost = 0
             for layer in layers:
                 if any(not isinstance(layer[key], bool) for key in ('shared', 'visible', 'locked')):
                     raise ValueError('Неверные свойства слоя.')
@@ -270,8 +377,16 @@ class PixelDocument:
                 images = []
                 for value in layer['images']:
                     raw = base64.b64decode(value, validate=True)
-                    image = QImage.fromData(raw, 'PNG').convertToFormat(QImage.Format.Format_ARGB32)
-                    if image.isNull() or max(image.width(), image.height()) > 256 or (size is not None and image.size() != size):
+                    buffer = QBuffer()
+                    buffer.setData(raw)
+                    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+                    reader = QImageReader(buffer, b'PNG')
+                    dimensions = reader.size()
+                    cost += max(0, dimensions.width()) * max(0, dimensions.height()) * 4
+                    if max(dimensions.width(), dimensions.height()) > MAX_DIMENSION or cost > EDITOR_BYTES:
+                        raise ValueError('Слои: размер до 512×512, общий объём до 64 МиБ.')
+                    image = reader.read().convertToFormat(QImage.Format.Format_ARGB32)
+                    if image.isNull() or (size is not None and image.size() != size):
                         raise ValueError('Неверный размер слоя.')
                     size = image.size()
                     images.append(image)
@@ -279,6 +394,7 @@ class PixelDocument:
             result.layers, result.count = decoded, count
             result.fps = max(1, min(60, int(data.get('fps', 8))))
             result.pingpong = data.get('pingpong') is True
+            result.delays = cls.validate_delays(data.get('delays'), count)
             result.index = max(0, min(count - 1, int(data.get('index', 0))))
             result.layer_index = max(0, min(len(decoded) - 1, int(data.get('layer_index', 0))))
             return result

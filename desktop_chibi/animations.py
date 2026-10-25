@@ -77,12 +77,15 @@ def _stream_duration(filename, modified, length):
     return max(.15, duration)
 
 
-def cached_gif(path, first=0, last=0, max_size=0):
+def cached_gif(path, first=0, last=0, max_size=0, *, memory_limit=None):
     """Share decoded GIF frames, including their original per-frame delays."""
     info = path.stat()
+    memory_limit = _CACHE_LIMIT if memory_limit is None else memory_limit
     key = ('gif', str(path.resolve()), info.st_mtime_ns, info.st_size, first, last, max_size)
     cached = _cache_get(key)
     if cached is not None:
+        if sum(frame.width() * frame.height() * 4 for frame in cached[0]) > memory_limit:
+            raise GifTooLarge('Декодированные кадры GIF превышают лимит памяти.')
         return cached
     reader = QImageReader(str(path))
     count = reader.imageCount()
@@ -93,8 +96,8 @@ def cached_gif(path, first=0, last=0, max_size=0):
     if max_size and max(size.width(), size.height()) > max_size:
         size = size.scaled(QSize(max_size, max_size), Qt.AspectRatioMode.KeepAspectRatio)
         reader.setScaledSize(size)
-    if selected_count > 512 or size.width() * size.height() * 4 * max(1, selected_count) > _CACHE_LIMIT:
-        raise GifTooLarge('Для обработки GIF нужно не больше 512 кадров и 32 МиБ. Уменьшите размер или выберите часть кадров в настройках GIF.')
+    if selected_count > 512 or size.width() * size.height() * 4 * max(1, selected_count) > memory_limit:
+        raise GifTooLarge(f'Для обработки GIF нужно не больше 512 кадров и {memory_limit // 1048576} МиБ. Уменьшите размер или выберите часть кадров в настройках GIF.')
     frames, delays, cost = [], [], 0
     index = 0
     while reader.canRead():
@@ -106,7 +109,7 @@ def cached_gif(path, first=0, last=0, max_size=0):
         if index <= first:
             continue
         cost += image.width() * image.height() * 4
-        if len(frames) >= 512 or cost > _CACHE_LIMIT:
+        if len(frames) >= 512 or cost > memory_limit:
             raise GifTooLarge('GIF слишком большой для обратного проигрывания: уменьшите размер или число кадров.')
         frames.append(QPixmap.fromImage(image))
         delays.append(delay)
@@ -164,6 +167,7 @@ class Clip:
         self.movie = None
         self.frames = []
         self.gif_delays = ()
+        self.speed = 100
         path = Path(spec.get('file', ''))
         if not path.is_file():
             raise ValueError(f'Файл не найден: {path}')
@@ -226,6 +230,16 @@ class Clip:
             except OSError as error:
                 raise ValueError(f'Не удалось прочитать файл: {path.name}') from error
             self.duration = (max(1, 2 * count - 2) if self.pingpong else count) / self.fps
+            delays = spec.get('delays')
+            if delays is not None:
+                if not isinstance(delays, list) or len(delays) != count or any(type(d) is not int or not 10 <= d <= 60000 for d in delays):
+                    raise ValueError('Задержки должны соответствовать кадрам: 10–60000 мс.')
+                self.gif_delays = tuple(delays)
+                self.order = tuple(range(count))
+                if self.pingpong:
+                    self.order += self.order[-2:0:-1]
+                self.frame_ends = tuple(accumulate(self.gif_delays[index] for index in self.order))
+                self.duration = self.frame_ends[-1] / 1000
 
     def start(self):
         if self.movie:

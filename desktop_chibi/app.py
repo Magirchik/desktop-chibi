@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from PySide6.QtCore import QRect, QRectF, QSettings, Qt, QTimer
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMenu, QMessageBox, QInputDialog, QPushButton, QSlider, QSystemTrayIcon,
+    QLabel, QLineEdit, QMenu, QMenuBar, QMessageBox, QInputDialog, QPushButton, QSlider, QSystemTrayIcon,
     QVBoxLayout, QWidget, QScrollArea, QPlainTextEdit,
 )
 
@@ -399,7 +400,7 @@ class Settings(QWidget):
         self.manager = None
         self.store = QSettings('DesktopChibi', 'DesktopChibi')
         self.setWindowTitle('Desktop Chibi · Настройки')
-        self.setMinimumSize(480, 520)
+        self.setMinimumSize(600, 520)
         self.setObjectName('desktop')
         apply_theme(self)
         outer = QVBoxLayout(self)
@@ -407,6 +408,26 @@ class Settings(QWidget):
         outer.setSpacing(0)
         bar = window_bar('DESKTOP CHIBI', brand=True)
         outer.addWidget(bar)
+        menu_bar = QMenuBar()
+        menu_bar.setNativeMenuBar(False)
+        companion_menu = menu_bar.addMenu('Чибик')
+        companion_menu.addAction('Добавить чибика', lambda: self.manager.add())
+        companion_menu.addAction('Переименовать…', self.rename_companion)
+        companion_menu.addSeparator()
+        companion_menu.addAction('Показать / скрыть', self.toggle_pet)
+        companion_menu.addSeparator()
+        companion_menu.addAction('Выход', self.close_application)
+        look_menu = menu_bar.addMenu('Облик')
+        look_menu.addAction('Загрузить облик…', self.choose_character)
+        look_menu.addAction('Мастерская анимаций…', self.edit_animations)
+        tools_menu = menu_bar.addMenu('Настройка')
+        tools_menu.addAction('Настройки приложения…', self.open_app_settings)
+        tools_menu.addSeparator()
+        tools_menu.addAction('Помощник настройки…', self.open_quick_setup)
+        tools_menu.addAction('События и правила…', self.open_events)
+        help_menu = menu_bar.addMenu('Помощь')
+        help_menu.addAction('Открыть помощь', self.open_guide)
+        outer.addWidget(menu_bar)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content = PixelSurface()
@@ -543,7 +564,8 @@ class Settings(QWidget):
         self.game_off_button.clicked.connect(lambda: self.set_game_overlay_all(False))
         game_row.addWidget(self.game_off_button)
         controls_layout.addLayout(game_row)
-        controls_hint = QLabel('Эти настройки действуют на всех чибиков. Сочетания клавиш выбираются в системном окне.')
+        controls_hint = QLabel('Эти настройки действуют на всех чибиков. '
+                              + ('Сочетания клавиш настраиваются в приложении.' if sys.platform == 'win32' else 'Сочетания клавиш выбираются в системном окне.'))
         controls_hint.setWordWrap(True)
         controls_layout.addWidget(controls_hint)
         controls_row = QHBoxLayout()
@@ -610,6 +632,10 @@ class Settings(QWidget):
         self.bind_vesktop_button = QPushButton('Речь друга в Vesktop…')
         self.bind_vesktop_button.clicked.connect(self.bind_vesktop)
         character_layout.addWidget(self.bind_vesktop_button)
+        if sys.platform == 'win32':
+            for button in (self.bind_notifications_button, self.bind_audio_button, self.bind_vesktop_button):
+                button.setEnabled(False)
+                button.setToolTip('Этот источник доступен только в Linux. В Windows доступны локальные события и таймеры.')
         self.settings_tabs = PixelTabs()
         layout.addWidget(self.settings_tabs)
         self.settings_tabs.addTab(companions, 'Чибики')
@@ -739,7 +765,8 @@ class Settings(QWidget):
         add_app.clicked.connect(self.add_window_application)
         app_row.addWidget(add_app)
         display_layout.addLayout(app_row)
-        rule_hint = QLabel('Обновите список и добавьте нужные приложения. Правило учитывает активное приложение и требует расширения GNOME.')
+        rule_hint = QLabel('Обновите список и добавьте нужные приложения. Правило учитывает активное приложение.'
+                           + (' В Windows используется имя программы без .exe.' if sys.platform == 'win32' else ' Требуется расширение GNOME.'))
         rule_hint.setObjectName('muted')
         rule_hint.setWordWrap(True)
         display_layout.addWidget(rule_hint)
@@ -823,7 +850,7 @@ class Settings(QWidget):
         self.refresh_desktop_controls()
         QApplication.instance().aboutToQuit.connect(self.shutdown)
         self.manager.persist()
-        self.resize(680, 800)
+        self.resize(680, 860)
 
     def slider(self, low, high, key):
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -1091,7 +1118,9 @@ class Settings(QWidget):
             badge, tone, reason = 'Ожидание', 'waiting', 'Появится, когда друг войдёт в звонок.'
         elif controls and not controls.allows(self.pet):
             badge, tone = 'Ожидание', 'waiting'
-            reason = 'Скрыт правилом активного приложения.' if controls.available else 'Правила окон недоступны без расширения GNOME.'
+            reason = ('Скрыт правилом активного приложения.' if controls.available else
+                      'Не удалось определить активное приложение Windows.' if sys.platform == 'win32' else
+                      'Правила окон недоступны без расширения GNOME.')
         else:
             badge, tone, reason = 'Виден', 'visible', 'Виден на рабочем столе.'
         self.status.setText(badge)
@@ -1170,6 +1199,14 @@ class Settings(QWidget):
 
     def open_quick_setup(self, checked=False):
         dialog = QuickSetup(self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    def open_app_settings(self, checked=False):
+        from .app_settings import AppSettings
+        dialog = AppSettings(self)
         try:
             dialog.exec()
         finally:
@@ -1283,6 +1320,8 @@ def main():
     sys.argv[0] = 'desktop-chibi'
     app = QApplication([])
     app.setApplicationName('Desktop Chibi')
+    from . import __version__
+    app.setApplicationVersion(__version__)
     app.setDesktopFileName('desktop-chibi')
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'desktop-chibi.png')))
     app.setQuitOnLastWindowClosed(False)

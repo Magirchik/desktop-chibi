@@ -4,16 +4,23 @@ import sys
 from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLineEdit, QTextBrowser, QVBoxLayout, QLabel
-from .pixel_ui import apply_theme
+from .pixel_ui import apply_theme, window_bar, SystemHeading
 
 
 def event_command(event='code.done'):
     import subprocess
-    args = [sys.executable, str(Path(__file__).with_name('emit.py')), '--source', 'code', '--event', event]
+    launcher = [sys.executable, '--emit'] if getattr(sys, 'frozen', False) else [sys.executable, str(Path(__file__).with_name('emit.py'))]
+    args = [*launcher, '--source', 'code', '--event', event]
     return subprocess.list2cmdline(args) if sys.platform == 'win32' else shlex.join(args)
 
 
 GUIDES = {
+    'appearance': ('Темы приложения', '''
+<h2>Светлая и ночные темы</h2>
+<p>Откройте верхнее меню <b>«Настройка → Настройки приложения…»</b>.
+Доступны Light (светлая), Dark (тёмная с розовыми акцентами) и Midnight (синяя ночная).</p>
+<p>Выбор применяется сразу к открытым окнам и сохраняется после перезапуска.
+Цвета чибиков, рисунков и палитры редактора остаются исходными.</p>'''),
     'routines': ('Таймеры, перерывы и звуки', '''
 <h2>Напоминания без внешних подключений</h2>
 <p>В «Помощнике настройки» доступны <b>«Напоминать о перерыве»</b>,
@@ -85,12 +92,17 @@ Shift+Delete удаляет выбранный. Space включает пауз�
 Настройка сохраняется и работает у чибика на рабочем столе. Для загруженных GIF этот режим работает сразу, сохраняя задержки кадров. Откройте «Мастерская анимаций → Анимация» и включите флажок; преобразование через редактор не требуется.</p>
 <h3>Готовый GIF из другого редактора</h3>
 <p>Перетащите файл в мастерскую или нажмите «Загрузить файл…». <b>«Настройки GIF»</b> позволяют
-выбрать скорость 25–400 %, первый и последний кадр, обратный порядок и размер.
+выбрать скорость 25–400 %, обратный порядок и размер.
+Первый и последний кадр находятся прямо под предпросмотром: задайте числа или отметьте кадр
+кнопками «Начало здесь» / «Конец здесь». «Весь GIF» сбрасывает обрезку.
 Уменьшение до 128–256 пкс сокращает память декодированных кадров. Ползунок под предпросмотром ставит паузу
 и показывает отдельный кадр; для больших потоковых GIF он недоступен.</p>
 <p>Все изменения сохраняются в наборе, исходный GIF не перезаписывается.
-Для покадрового рисования нужны кадры до 256×256; при преобразовании в рисунок используется равномерный FPS.
-Обычные настройки GIF сохраняют его переменные задержки.</p>
+Для покадрового рисования поддерживается до 512×512. Большой GIF сначала предложит выбрать размер и фрагмент,
+которые укладываются в 64 МиБ изображений. Переменные задержки сохраняются при рисовании и экспорте;
+изменение FPS вручную задаёт равномерную скорость.</p>
+<p>В редакторе «Размер для чибика» уменьшает итоговую анимацию после рисования.
+«Авто» укладывает кадры в 32 МиБ. Проект слоёв сохраняет исходное разрешение.</p>
 <p>Для оповещений нарисуйте состояния «Говорит», «Уведомление», «Готово» или «Ошибка».
 Исходные файлы не перезаписываются. «Отмена» отменяет текущий черновик.
 Набор можно передать другу через «Экспорт набора».</p>'''),
@@ -265,8 +277,8 @@ class GuideDialog(QDialog):
         self.resize(700, 680)
         self.setMinimumSize(480, 400)
         layout = QVBoxLayout(self)
-        bar = QLabel(' +  CHIBI GUIDE / ПОШАГОВАЯ ПОМОЩЬ')
-        bar.setObjectName('bar')
+        layout.addWidget(window_bar('Помощь Desktop Chibi'))
+        bar = SystemHeading('Помощь')
         layout.addWidget(bar)
         self.search = QLineEdit()
         self.search.setPlaceholderText('Найти: сообщения, кадры, вес, Discord…')
@@ -276,7 +288,7 @@ class GuideDialog(QDialog):
             self.topics.addItem(title, key)
         layout.addWidget(self.topics)
         self.browser = QTextBrowser()
-        self.browser.setStyleSheet('background: #fff4fc; border: 2px solid #927cb0; padding: 14px; font-size: 14px;')
+        self.browser.setStyleSheet('padding: 14px;')
         self.browser.setOpenExternalLinks(True)
         layout.addWidget(self.browser, 1)
         buttons = QDialogButtonBox()

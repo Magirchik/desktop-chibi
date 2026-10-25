@@ -1,5 +1,6 @@
 """Compact sound editor shared by the wizard and advanced rules."""
 from pathlib import Path
+import sys
 from PySide6.QtWidgets import QCheckBox, QFileDialog, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 
@@ -41,7 +42,8 @@ class SoundOptions(QWidget):
         self.options.hide()
 
     def choose(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Короткий звук чибика', '', 'Звук (*.wav *.ogg *.flac);;Все файлы (*)')
+        formats = 'Звук WAV (*.wav)' if sys.platform == 'win32' else 'Звук (*.wav *.ogg *.flac);;Все файлы (*)'
+        path, _ = QFileDialog.getOpenFileName(self, 'Короткий звук чибика', '', formats)
         if path:
             self.path = path
             self.file.setText(Path(path).name)

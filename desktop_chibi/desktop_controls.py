@@ -4,7 +4,6 @@ import sys
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot, SLOT, QProcess
 from PySide6.QtWidgets import QApplication
-from PySide6.QtDBus import QDBusConnection, QDBusMessage, QDBusPendingCallWatcher
 
 SERVICE = 'org.gnome.Shell'
 PATH = '/org/gnome/Shell/Extensions/DesktopChibi'
@@ -12,7 +11,7 @@ INTERFACE = 'org.gnome.Shell.Extensions.DesktopChibi'
 
 
 def normalize_app(value):
-    return str(value).strip().casefold().removesuffix('.desktop')
+    return str(value).strip().casefold().removesuffix('.desktop').removesuffix('.exe')
 
 
 def clean_window_rule(value):
@@ -51,21 +50,36 @@ class DesktopControls(QObject):
         self.status = 'Правила окон: мост GNOME не подключён.'
         self.shortcut_status = 'Хоткеи выключены. Нажмите «Настроить хоткеи…».'
         self.shortcut_client = None
-        self.bus = QDBusConnection.sessionBus()
+        self.bus = self.dbus = self.windows = None
         self.pending = set()
         self.state_pending = False
-        self.bus.connect(SERVICE, PATH, INTERFACE, 'ActiveAppChanged', self, SLOT('active_changed(QString)'))
         self.timer = QTimer(self)
         self.timer.setInterval(5000)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start()
-        self.refresh()
+        if sys.platform.startswith('linux'):
+            from PySide6 import QtDBus
+            self.dbus = QtDBus
+            self.bus = QtDBus.QDBusConnection.sessionBus()
+            self.bus.connect(SERVICE, PATH, INTERFACE, 'ActiveAppChanged', self, SLOT('active_changed(QString)'))
+            self.timer.start()
+            self.refresh()
+        elif sys.platform == 'win32' and QApplication.platformName() != 'offscreen':
+            try:
+                from .windows_desktop import WindowsApplications
+                self.windows = WindowsApplications(self)
+                self.windows.changed.connect(self.active_changed)
+                self.windows.start()
+            except OSError as error:
+                self.status = str(error)
         if manager.owner.store.value('portal_shortcuts_enabled', False, type=bool):
-            QTimer.singleShot(0, self, self.start_shortcuts)
+            QTimer.singleShot(0, self, lambda: self.start_shortcuts(configure=False))
 
     def call(self, method, callback):
-        message = QDBusMessage.createMethodCall(SERVICE, PATH, INTERFACE, method)
-        watcher = QDBusPendingCallWatcher(self.bus.asyncCall(message, 1000), self)
+        if self.bus is None:
+            callback(None)
+            return
+        message = self.dbus.QDBusMessage.createMethodCall(SERVICE, PATH, INTERFACE, method)
+        watcher = self.dbus.QDBusPendingCallWatcher(self.bus.asyncCall(message, 1000), self)
         self.pending.add(watcher)
 
         def finished():
@@ -73,7 +87,7 @@ class DesktopControls(QObject):
             self.pending.discard(watcher)
             watcher.deleteLater()
             try:
-                data = json.loads(reply.arguments()[0]) if reply.type() != QDBusMessage.MessageType.ErrorMessage else None
+                data = json.loads(reply.arguments()[0]) if reply.type() != self.dbus.QDBusMessage.MessageType.ErrorMessage else None
             except (ValueError, TypeError, IndexError):
                 data = None
             callback(data)
@@ -120,7 +134,12 @@ class DesktopControls(QObject):
         self.hidden = not self.hidden
         self.apply_visibility()
 
-    def start_shortcuts(self):
+    def start_shortcuts(self, checked=False, *, configure=True):
+        if self.manager.owner._shutting_down:
+            return
+        if sys.platform == 'win32':
+            self.start_windows_shortcuts(configure)
+            return
         if self.shortcut_client is not None:
             # Portal v1 cannot reopen its binding dialog. GNOME's application
             # settings edit bindings in place and notify our existing session.
@@ -144,6 +163,26 @@ class DesktopControls(QObject):
         self.shortcut_status = 'Подключение системного портала хоткеев…'
         self.changed.emit()
         client.start()
+
+    def start_windows_shortcuts(self, configure):
+        from .windows_desktop import WindowsShortcuts, DEFAULT_KEYS, configure_shortcuts
+        store = self.manager.owner.store
+        try:
+            keys = json.loads(store.value('windows_shortcuts_v1', json.dumps(DEFAULT_KEYS)))
+            if not isinstance(keys, dict) or set(keys) != set(DEFAULT_KEYS) or not all(isinstance(value, str) for value in keys.values()):
+                keys = dict(DEFAULT_KEYS)
+            if configure:
+                keys = configure_shortcuts(keys, self.manager.owner)
+                if keys is None:
+                    return
+            if self.shortcut_client is None:
+                self.shortcut_client = WindowsShortcuts(self)
+                self.shortcut_client.packet.connect(self.receive_shortcut_packet)
+            self.shortcut_client.rebind(keys)
+            store.setValue('windows_shortcuts_v1', json.dumps(keys))
+        except (OSError, ValueError, TypeError) as error:
+            self.shortcut_status = 'Хоткеи: ' + str(error)
+            self.changed.emit()
 
     def receive_shortcut_packet(self, packet):
         if packet.get('action') in ('visibility', 'input'):
@@ -193,11 +232,17 @@ class DesktopControls(QObject):
         return not self.hidden and (item is None or window_allowed(item.window_rule, self.active_app, self.available))
 
     def request_applications(self):
+        if self.windows is not None:
+            self.applications.emit(self.windows.applications())
+            return
         self.call('ListApplications', lambda apps: self.applications.emit(apps if isinstance(apps, list) else []))
 
     def shutdown(self):
         self.close_shortcuts()
         self.timer.stop()
-        self.bus.disconnect(SERVICE, PATH, INTERFACE, 'ActiveAppChanged', self, SLOT('active_changed(QString)'))
+        if self.windows is not None:
+            self.windows.stop()
+        if self.bus is not None:
+            self.bus.disconnect(SERVICE, PATH, INTERFACE, 'ActiveAppChanged', self, SLOT('active_changed(QString)'))
         for watcher in self.pending:
             watcher.finished.disconnect()

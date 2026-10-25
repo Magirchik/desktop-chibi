@@ -1,0 +1,4 @@
+-r requirements.txt
+PySide6-Essentials==6.12.0
+PyInstaller==6.22.0
+pyinstaller-hooks-contrib==2026.9

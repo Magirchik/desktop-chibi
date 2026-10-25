@@ -27,7 +27,6 @@ class PetController:
         for key in values:
             setattr(self, 'pet_size' if key == 'size' else key, Value(self, key))
         self.menu = QMenu(manager.owner)
-        self.menu.setStyleSheet(manager.owner.styleSheet())
         self.menu.addAction('Настройки этого чибика', self.show_settings)
         self.menu.addAction('Показать / спрятать', self.toggle)
         presets = self.menu.addMenu('Сменить пресет')
