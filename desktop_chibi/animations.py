@@ -218,6 +218,7 @@ class Clip:
             self.movie.setCacheMode(QMovie.CacheMode.CacheNone)
             self.movie.setSpeed(self.speed)
             if not self.movie.isValid():
+                self.movie.setFileName('')
                 self.movie.deleteLater()
                 self.movie = None
                 raise ValueError(f'Не удалось прочитать GIF: {path.name}')
@@ -253,8 +254,12 @@ class Clip:
 
     def close(self):
         if self.movie:
-            self.movie.stop()
-            self.movie.deleteLater()
+            movie, self.movie = self.movie, None
+            movie.stop()
+            # stop() retains the reader. Release its file before deferred QObject
+            # destruction so Windows can replace/delete a discarded GIF too.
+            movie.setFileName('')
+            movie.deleteLater()
 
     def frame(self, elapsed, loop=True):
         if self.movie:

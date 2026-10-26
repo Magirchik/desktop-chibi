@@ -130,15 +130,17 @@ class Pet(QWidget):
         layer = self.controller.layer.currentIndex()
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, self.input_passthrough())
         self.drag_offset = None
-        flags = self.windowFlags()
+        # Use an integer mask: enum inversion can discard high-bit hints on
+        # some Python/PySide combinations (notably the bottom-layer hint).
+        flags = int(self.windowFlags())
         for flag, enabled in (
             (Qt.WindowType.WindowStaysOnTopHint, game or layer == 0),
             (Qt.WindowType.WindowStaysOnBottomHint, not game and layer == 2),
             (Qt.WindowType.X11BypassWindowManagerHint, game and QApplication.platformName() == 'xcb'),
             (Qt.WindowType.WindowTransparentForInput, self.input_passthrough())):
-            flags = flags | flag if enabled else flags & ~flag
-        if flags != self.windowFlags():
-            self.setWindowFlags(flags)
+            flags = flags | int(flag) if enabled else flags & ~int(flag)
+        if flags != int(self.windowFlags()):
+            self.setWindowFlags(Qt.WindowType(flags))
         self.setVisible(visible)
         if game and self.isVisible():
             self.raise_()

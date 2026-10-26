@@ -105,6 +105,28 @@ class StackingTests(unittest.TestCase):
         self.manager.eventFilter(pet, QEvent(QEvent.Type.MouseButtonPress))
         self.assertTrue(self.manager.stack_timer.isActive())
 
+    def test_delayed_drag_callback_cannot_overwrite_settings_after_shutdown(self):
+        editor = self.settings.stacking_editor
+        self.assertTrue(editor.list.model().moveRows(editor.list.rootIndex(), 1, 1,
+                                                    editor.list.rootIndex(), 0))
+        # A drag commit is queued. A later instance must keep its own order,
+        # even if the old widget has not been destroyed by Qt yet.
+        self.settings.shutdown()
+        restored = Settings()
+        try:
+            restored.manager.add()
+            expected = list(restored.manager.stacking_order)
+            APP.processEvents()
+            saved = json.loads(restored.store.value('companion_stacking_v1'))
+            self.assertEqual(saved, expected)
+            self.manager.schedule_persist()
+            self.assertFalse(self.manager.save_timer.isActive())
+        finally:
+            restored.shutdown()
+            restored.tray.hide()
+            restored.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
 
 if __name__ == '__main__':
     unittest.main()

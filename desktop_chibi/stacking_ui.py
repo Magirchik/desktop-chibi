@@ -84,7 +84,7 @@ class StackingOrder(QWidget):
         self.commit()
 
     def commit(self, *_):
-        if self.manager and not self.updating:
+        if self.manager and not self.manager.stacking_stopped and not self.updating:
             self.manager.set_stacking_order([
                 self.list.item(row).data(Qt.ItemDataRole.UserRole) for row in range(self.list.count())])
         self.update_buttons()

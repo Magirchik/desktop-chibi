@@ -58,7 +58,7 @@ def suggest_app_name(path, entries):
     resolved = selected.resolve()
     for entry in entries:
         executable = entry['executable']
-        candidate = shutil.which(executable) if executable and not executable.startswith('/') else executable
+        candidate = shutil.which(executable) if executable and not Path(executable).is_absolute() else executable
         if candidate and Path(candidate).resolve() == resolved:
             return entry['name']
     return selected.stem

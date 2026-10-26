@@ -216,7 +216,7 @@ class CompanionManager(QObject):
                  'window_rule': c.window_rule} for c in self.items]
 
     def persist(self):
-        if self.loading or self.owner._loading_companion:
+        if self.stacking_stopped or self.loading or self.owner._loading_companion:
             return
         self.save_timer.stop()
         self.capture_active()
@@ -227,6 +227,8 @@ class CompanionManager(QObject):
         self.update_load_label()
 
     def schedule_persist(self):
+        if self.stacking_stopped:
+            return
         self.capture_active()
         self.update_load_label()
         self.save_timer.start()
@@ -389,9 +391,10 @@ class CompanionManager(QObject):
             self.scheduler.wake()
 
     def shutdown(self):
+        self.persist()
         self.stacking_stopped = True
         self.stack_timer.stop()
-        self.persist()
+        self.save_timer.stop()
         self.scheduler.shutdown()
         for item in self.items:
             item.pet.timer.stop()

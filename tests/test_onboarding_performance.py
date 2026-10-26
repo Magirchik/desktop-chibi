@@ -151,6 +151,9 @@ class BeginnerAndPerformanceTests(unittest.TestCase):
             pet.show()
             self.assertNotIn('hidden', pet.notifications)
             self.assertTrue(self.manager.scheduler.timer.isActive())
+            # The live pet intentionally keeps its streaming reader while hidden.
+            # Unload it before deleting the fixture directory on Windows.
+            pet.load_character('')
 
     def test_cached_frames_are_shared_and_builtins_cached(self):
         with tempfile.TemporaryDirectory() as directory:

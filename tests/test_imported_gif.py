@@ -69,6 +69,20 @@ class ImportedGifTests(unittest.TestCase):
         finally:
             second.configure({})
 
+    def test_discarded_streaming_movie_releases_its_filename_immediately(self):
+        with patch('desktop_chibi.animations._CACHE_LIMIT', 1):
+            self.player.configure({'idle': {'file': str(self.path)}})
+        clip = self.player.clips['idle']
+        movie = clip.movie
+        self.assertIsNotNone(movie)
+        self.player.frame('idle', 0)
+        self.player.configure({})
+        self.assertIsNone(clip.movie)
+        self.assertEqual(movie.fileName(), '')
+        # No processEvents()/DeferredDelete is needed for file access.
+        self.path.unlink()
+        self.assertFalse(self.path.exists())
+
     def test_gif_workshop_toggle_export_and_reimport_leave_source_intact(self):
         original = self.path.read_bytes()
         editor = AnimationEditor({'idle': {'file': str(self.path)}})
