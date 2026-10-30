@@ -74,6 +74,7 @@ def repair_application(owner):
         elif hub.vesktop_bridge is None:
             messages.append('Не удалось создать мост Vesktop. Проверьте состояние источника в диагностике.')
         else:
-            messages.append('Мост Vesktop готов. Vesktop должен быть запущен с плагином DesktopChibiBridge.')
+            from .vesktop_installation import installation_problem
+            messages.append(installation_problem() or 'Мост Vesktop готов. Vesktop должен быть запущен с плагином DesktopChibiBridge.')
     manager.load_active()
     return messages, backup

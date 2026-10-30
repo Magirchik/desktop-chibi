@@ -104,5 +104,4 @@ def main(argv=None):
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('Magirchik.DesktopChibi')
     from .app import main as application_main
-    application_main()
-    return 0
+    return application_main()

@@ -31,6 +31,53 @@ def atomic_json(path, value):
     os.replace(temporary, path)
 
 
+def require_closed(client):
+    lock = client / 'SingletonLock'
+    if lock.is_symlink():
+        try:
+            pid = int(os.readlink(lock).rsplit('-', 1)[-1])
+            os.kill(pid, 0)
+        except (ValueError, ProcessLookupError):
+            pass
+        else:
+            raise ValueError('Vesktop запущен. Сначала завершите его через меню «Выход».')
+
+
+def restore_build(release, client, data_home, *, apply=False):
+    state = read_json(client / 'state.json', {})
+    destination = Path(state.get('vencordDir', '')).resolve()
+    managed = (data_home / 'DesktopChibi/vesktop-builds').resolve()
+    if destination == managed or not destination.is_relative_to(managed) or not destination.is_dir():
+        raise ValueError('Не найдена установленная пользовательская сборка DesktopChibiBridge.')
+    print('Восстановить сборку:', destination)
+    print('Чибики, правила, ключи, канал и User ID не меняются.')
+    print('Автообновление Vencord будет выключено: штатное обновление удаляет пользовательские плагины.')
+    if not apply:
+        print('Это только план. Закройте Vesktop через «Выход», затем добавьте --install.')
+        return
+    require_closed(client)
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
+    backup = destination.with_name(destination.name + '.before-restore-' + stamp)
+    shutil.copytree(destination, backup)
+    settings_file = client / 'settings/settings.json'
+    settings = read_json(settings_file, {})
+    settings_backup = settings_file.with_name(settings_file.name + '.before-chibi-restore-' + stamp + '.bak')
+    had_settings = settings_file.exists()
+    if had_settings:
+        shutil.copy2(settings_file, settings_backup)
+    try:
+        shutil.copytree(release, destination, dirs_exist_ok=True)
+        settings['autoUpdate'] = False
+        settings.setdefault('plugins', {}).setdefault('DesktopChibiBridge', {})['enabled'] = True
+        atomic_json(settings_file, settings)
+    except Exception:
+        shutil.copytree(backup, destination, dirs_exist_ok=True)
+        if had_settings:
+            shutil.copy2(settings_backup, settings_file)
+        raise
+    print('Восстановлено. Запустите Vesktop. Резервная копия:', backup)
+
+
 def prepare_rules(store, target_id):
     data = json.loads(store.value('events_v1', '{}'))
     data.setdefault('sources', default_sources())
@@ -66,7 +113,8 @@ def prepare_rules(store, target_id):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--install', action='store_true')
-    parser.add_argument('--target-id', required=True)
+    parser.add_argument('--target-id')
+    parser.add_argument('--restore-only', action='store_true', help='Восстановить только сборку моста, сохранив все правила чибиков')
     parser.add_argument('--release', type=Path, default=ROOT / '.tools/vesktop-release')
     args = parser.parse_args()
     config_home = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
@@ -82,6 +130,11 @@ def main():
         file = release / name
         if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != manifest.get('files', {}).get(name):
             raise ValueError('Контрольная сумма сборки не совпала: ' + name)
+    if args.restore_only:
+        restore_build(release, client, data_home, apply=args.install)
+        return
+    if not args.target_id:
+        parser.error('--target-id обязателен для установки; для восстановления используйте --restore-only')
     store = QSettings(str(chibi), QSettings.Format.IniFormat)
     data, companions, name = prepare_rules(store, args.target_id)
     source = next(s for s in data['sources'] if s['id'] == 'vesktop')
@@ -94,15 +147,7 @@ def main():
     if not args.install:
         print('Это только план. Для записи: закройте Desktop Chibi и Vesktop, затем добавьте --install.')
         return
-    lock = client / 'SingletonLock'
-    if lock.is_symlink():
-        try:
-            pid = int(os.readlink(lock).rsplit('-', 1)[-1])
-            os.kill(pid, 0)
-        except (ValueError, ProcessLookupError):
-            pass
-        else:
-            raise ValueError('Vesktop запущен. Сначала завершите его через меню «Выход».')
+    require_closed(client)
     state, settings = read_json(state_file, {}), read_json(settings_file, {})
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
     backups = {}
@@ -121,6 +166,7 @@ def main():
     try:
         state['vencordDir'] = str(destination)
         settings.setdefault('plugins', {}).setdefault('DesktopChibiBridge', {})['enabled'] = True
+        settings['autoUpdate'] = False
         atomic_json(state_file, state)
         atomic_json(settings_file, settings)
         store.setValue('events_v1', json.dumps(data, ensure_ascii=False))

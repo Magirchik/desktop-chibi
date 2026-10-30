@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths
 from .animations import Animations, default_notification, read_manifest
+from .animation_assets import copy_animation_assets
 
 
 class PresetLibrary:
@@ -62,14 +63,7 @@ class PresetLibrary:
             folder.mkdir(parents=True)
             output = {}
             for state, spec in specs.items():
-                source = Path(spec['file'])
-                target = folder / (state + source.suffix.lower())
-                shutil.copy2(source, target)
-                output[state] = {**spec, 'file': target.name}
-                if spec.get('project'):
-                    project = folder / (state + '.pixel.json')
-                    shutil.copy2(spec['project'], project)
-                    output[state]['project'] = project.name
+                output[state] = copy_animation_assets(spec, folder, state, relative_to=folder)
             manifest = folder / 'chibi.json'
             manifest.write_text(json.dumps({'version': 1, 'name': name, 'animations': output},
                                             ensure_ascii=False, indent=2), encoding='utf-8')

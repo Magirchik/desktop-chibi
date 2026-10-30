@@ -1,6 +1,6 @@
 """A small animation workshop: each state can use a GIF or a grid sprite sheet."""
+import copy
 import json
-import shutil
 import tempfile
 import time
 import uuid
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QSlider, QSpinBox, QVBoxLayout, QWidget,
 )
 from .animations import Animations, STATES, read_manifest, cached_gif
+from .animation_assets import copy_animation_assets
 from .pixel_ui import bunny_frame, apply_theme, PixelSurface, PixelTabs, PixelPreview, window_bar
 from .pixel_editor import PixelEditor, PixelDocument
 from .pixel_document import EDITOR_BYTES
@@ -21,14 +22,13 @@ from .gif_import import GifImport
 
 
 class AnimationEditor(QDialog):
-    def __init__(self, specs, parent=None, *, default_specs=None):
+    def __init__(self, specs, parent=None, *, default_specs=None, step_mode=False):
         super().__init__(parent)
         self.setWindowTitle('Мастерская анимаций')
         apply_theme(self)
         self.setMinimumWidth(520)
-        self.specs = {state: dict(spec) for state, spec in specs.items()}
-        self.default_specs = {state: dict(spec) for state, spec in
-                              (specs if default_specs is None else default_specs).items()}
+        self.specs = copy.deepcopy(specs)
+        self.default_specs = copy.deepcopy(specs if default_specs is None else default_specs)
         self.player = Animations(self)
         self.loading = False
         self.setAcceptDrops(True)
@@ -56,7 +56,7 @@ class AnimationEditor(QDialog):
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
         bar = window_bar('Мастерская анимаций')
         outer.insertWidget(0, bar)
-        subtitle = QLabel('Выберите состояние и настройте его анимацию.')
+        subtitle = QLabel('Выберите состояние: ему можно назначить файл или сценарий из нескольких анимаций.')
         subtitle.setObjectName('muted')
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -67,6 +67,7 @@ class AnimationEditor(QDialog):
         animation_layout = QVBoxLayout(animation_page)
         pack_page = QWidget()
         self.tabs.addTab(pack_page, 'Набор')
+        self.tabs.setTabVisible(1, not step_mode)
         pack_layout = QVBoxLayout(pack_page)
         layout = animation_layout
         states = QHBoxLayout()
@@ -86,6 +87,9 @@ class AnimationEditor(QDialog):
         self.delete_button.clicked.connect(self.remove_animation)
         states.addWidget(self.delete_button)
         layout.addLayout(states)
+        if step_mode:
+            for widget in (self.state, add, self.delete_button):
+                widget.hide()
         self.preview = PixelPreview()
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(150)
@@ -135,6 +139,11 @@ class AnimationEditor(QDialog):
         files.addWidget(choose, 1)
         files.addWidget(self.clear_button)
         layout.addLayout(files)
+        self.sequence_button = QPushButton('Собрать сценарий…')
+        self.sequence_button.setToolTip('Упорядоченные части: например, танец влево → поворот → танец вправо. Порядок внутри сценария сохраняется.')
+        self.sequence_button.clicked.connect(self.edit_sequence)
+        self.sequence_button.setVisible(not step_mode)
+        layout.addWidget(self.sequence_button)
         priority_form = QFormLayout()
         self.priority = QSpinBox()
         self.priority.setRange(0, 100)
@@ -239,7 +248,8 @@ class AnimationEditor(QDialog):
         hint = QLabel('PNG / WebP: кадры в сетке слева направо, затем сверху вниз.\n'
                       'GIF: используется его собственная скорость.\n'
                       'Пустое состояние использует текстуру покоя.\n'
-                      'Дополнительные idle проигрываются случайно во время остановок.')
+                      'Дополнительные idle проигрываются случайно во время остановок.\n'
+                      'Сценарий объединяет несколько частей в неизменном порядке.')
         hint.setObjectName('muted')
         hint.setWordWrap(True)
         pack_layout.addWidget(hint)
@@ -282,16 +292,21 @@ class AnimationEditor(QDialog):
         spec = self.specs.get(self.current, {})
         self.delete_button.setEnabled(bool(spec) or self.current not in STATES)
         self.clear_button.setEnabled(bool(spec))
-        self.file_label.setText(Path(spec['file']).name if spec else 'Отдельный файл не выбран')
+        sequence = 'sequence' in spec
+        self.file_label.setText(f'Сценарий · частей: {len(spec["sequence"])}' if sequence else
+                                Path(spec['file']).name if spec else 'Отдельный файл не выбран')
         self.file_label.setToolTip(spec.get('file', ''))
+        self.sequence_button.setText('Редактировать сценарий…' if sequence else 'Собрать сценарий…')
+        self.draw_button.setEnabled(not sequence)
+        self.clear_button.setText('Убрать сценарий' if sequence else 'Убрать файл')
         self.priority.setValue(spec.get('priority', 0))
         self.priority.setEnabled(bool(spec))
         gif = Path(spec.get('file', '')).suffix.lower() == '.gif'
         for key, spin in self.fields.items():
             spin.setValue(spec.get(key, 8 if key == 'fps' else 1 if key == 'frames' else 0))
-            spin.setEnabled(bool(spec) and not gif)
+            spin.setEnabled(bool(spec) and not gif and not sequence)
         self.pingpong.setChecked(spec.get('pingpong', False))
-        self.pingpong.setEnabled(bool(spec))
+        self.pingpong.setEnabled(bool(spec) and not sequence)
         self.pingpong.setToolTip('Кадры проходят вперёд и возвращаются назад без повторения крайних кадров. Для GIF сохраняются исходные задержки.')
         self.gif_hint.setVisible(gif)
         self.gif_toggle.setVisible(gif)
@@ -305,8 +320,8 @@ class AnimationEditor(QDialog):
         for key, spin in self.gif_fields.items():
             spin.setValue(spec.get(key, 100 if key == 'speed' else 0) + (1 if key == 'first_frame' else 0))
         self.reverse.setChecked(spec.get('reverse', False))
-        self.sheet_toggle.setVisible(bool(spec) and not gif)
-        self.sheet_options.setVisible(bool(spec) and not gif and self.sheet_toggle.isChecked())
+        self.sheet_toggle.setVisible(bool(spec) and not gif and not sequence)
+        self.sheet_options.setVisible(bool(spec) and not gif and not sequence and self.sheet_toggle.isChecked())
         self.loading = False
         self.reload_preview()
 
@@ -358,7 +373,8 @@ class AnimationEditor(QDialog):
             duration = f'{clip.duration:.2f}'.replace('.', ',') if clip else ''
             size = clip.frames[0].size() if clip and clip.frames else None
             dimensions = f' · {size.width()}×{size.height()}' if size else ''
-            self.clip_info.setText(f'Кадров: {count} · {duration} с{dimensions}' if clip else 'Встроенная анимация')
+            self.clip_info.setText((f'Сценарий · {len(clip.parts)} частей · {duration} с' if hasattr(clip, 'parts') else
+                                   f'Кадров: {count} · {duration} с{dimensions}') if clip else 'Встроенная анимация')
         except ValueError as error:
             self.error.setText(str(error))
         self.render_preview()
@@ -510,6 +526,20 @@ class AnimationEditor(QDialog):
         self.specs.pop(self.current, None)
         self.refresh()
 
+    def edit_sequence(self):
+        from .animation_sequence import SequenceEditor
+        self.edit_timer.stop()
+        self.timer.stop()
+        self.player.suspend()
+        spec = self.specs.get(self.current, {})
+        dialog = SequenceEditor(spec, self.specs, self)
+        try:
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.specs[self.current] = {**dialog.spec, 'priority': spec.get('priority', 0)}
+        finally:
+            dialog.deleteLater()
+            self.refresh()
+
     def frames_for_drawing(self):
         document = self.drawing_document()
         return document.frames, document.fps
@@ -517,6 +547,8 @@ class AnimationEditor(QDialog):
     def drawing_document(self, override=None):
         key = self.current if self.current in self.specs else 'idle'
         spec = dict(override or self.specs.get(key, {}))
+        if 'sequence' in spec:
+            raise ValueError('Откройте сценарий и выберите часть для редактирования кадров.')
         if not spec:
             return PixelDocument([bunny_frame(state=self.current).toImage()])
         if spec.get('project'):
@@ -637,7 +669,7 @@ class AnimationEditor(QDialog):
         self.refresh()
 
     def reset_pack(self):
-        self.specs = {state: dict(spec) for state, spec in self.default_specs.items()}
+        self.specs = copy.deepcopy(self.default_specs)
         self.created_character = False
         self.character_name.hide()
         self.rebuild_states()
@@ -680,16 +712,7 @@ class AnimationEditor(QDialog):
             assets.mkdir(exist_ok=True)
             output = {}
             for state, spec in self.specs.items():
-                source = Path(spec['file'])
-                dest = assets / (state + source.suffix.lower())
-                if source.resolve() != dest.resolve():
-                    shutil.copy2(source, dest)
-                output[state] = {**spec, 'file': dest.relative_to(target.parent).as_posix()}
-                if spec.get('project'):
-                    project = assets / (state + '.pixel.json')
-                    if Path(spec['project']).resolve() != project.resolve():
-                        shutil.copy2(spec['project'], project)
-                    output[state]['project'] = project.relative_to(target.parent).as_posix()
+                output[state] = copy_animation_assets(spec, assets, state, relative_to=target.parent)
             target.write_text(json.dumps({'version': 1, 'name': target.stem, 'animations': output},
                                          ensure_ascii=False, indent=2), encoding='utf-8')
             self.error.setText('Набор сохранён. Переносите JSON вместе с папкой *_assets.')
@@ -704,18 +727,7 @@ class AnimationEditor(QDialog):
             output = {}
             storage = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / 'characters'
             for state, spec in self.specs.items():
-                source = Path(spec['file']).resolve()
-                if source.parent == drafts:
-                    storage.mkdir(parents=True, exist_ok=True)
-                    dest = storage / (uuid.uuid4().hex + '.png')
-                    shutil.copy2(source, dest)
-                    output[state] = {**spec, 'file': str(dest)}
-                    if spec.get('project'):
-                        project = dest.with_suffix('.pixel.json')
-                        shutil.copy2(spec['project'], project)
-                        output[state]['project'] = str(project)
-                else:
-                    output[state] = dict(spec)
+                output[state] = copy_animation_assets(spec, storage, uuid.uuid4().hex, only_from=drafts)
             self.player.configure(output)
             if self.created_character:
                 storage.mkdir(parents=True, exist_ok=True)

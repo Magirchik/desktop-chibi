@@ -219,8 +219,8 @@ class Pet(QWidget):
         elif not self.state.startswith('idle'):
             self.begin_idle(now)
         elif ((pinned or not self.controller.walk.isChecked())
-              and now - self.state_since >= max(self.controller.idle_duration.value(),
-                                                self.animations.duration(self.state, 0))):
+              and now - self.state_since >= self.animations.idle_duration(
+                  self.state, self.controller.idle_duration.value())):
             # Also vary idle animations when walking is disabled.
             self.begin_idle(now)
         self.place(area=area)
@@ -281,7 +281,7 @@ class Pet(QWidget):
         state = random.choice(variants) if self.controller.random_idle.isChecked() else 'idle'
         self.set_state(state, now)
         self.state_since = now
-        self.pause_until = now + max(self.controller.idle_duration.value(), self.animations.duration(state, 0))
+        self.pause_until = now + self.animations.idle_duration(state, self.controller.idle_duration.value())
         # Restart even if the same idle was randomly selected twice.
         self.animations.restart()
 
@@ -1334,6 +1334,23 @@ def main():
     app.setDesktopFileName('desktop-chibi')
     app.setWindowIcon(QIcon(str(Path(__file__).parent / 'assets' / 'desktop-chibi.png')))
     app.setQuitOnLastWindowClosed(False)
-    settings = Settings()
-    settings.show()
-    app.exec()
+    from .single_instance import SingleInstance
+    instance = None
+    settings = None
+    try:
+        try:
+            instance = SingleInstance(app)
+            if not instance.start():
+                return 0
+        except OSError as error:
+            QMessageBox.critical(None, 'Desktop Chibi', str(error))
+            return 1
+        settings = Settings()
+        instance.activated.connect(settings.show_settings)
+        settings.show()
+        return app.exec()
+    finally:
+        if settings is not None:
+            settings.shutdown()
+        if instance is not None:
+            instance.close()

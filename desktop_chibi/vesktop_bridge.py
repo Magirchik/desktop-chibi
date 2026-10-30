@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer
+from .vesktop_installation import installation_problem
 
 
 def bridge_config_path():
@@ -34,7 +35,7 @@ class VesktopBridge(QObject):
         finally:
             if temporary.exists():
                 temporary.unlink()
-        self.hub.set_status(source['id'], 'Мост готов. Включите DesktopChibiBridge в Vesktop.')
+        self.hub.set_status(source['id'], installation_problem() or 'Мост готов. Включите DesktopChibiBridge в Vesktop.')
         self.timer.start()
 
     def received(self):
@@ -50,7 +51,7 @@ class VesktopBridge(QObject):
             self.hub.update_presence()
             for user in self.source['users']:
                 self.hub.dispatch(self.source['id'], 'voice.speaking', user, False, record=False)
-            self.hub.set_status(self.source['id'], 'Нет связи с плагином Vesktop. Реакции речи остановлены.')
+            self.hub.set_status(self.source['id'], installation_problem() or 'Нет связи с плагином Vesktop. Реакции речи остановлены.')
 
     def stop(self):
         self.timer.stop()

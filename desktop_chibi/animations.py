@@ -1,14 +1,17 @@
 """Validated, state-based GIF and sprite-sheet animation clips."""
 import collections
+import copy
 from bisect import bisect_right
 from itertools import accumulate
 from functools import lru_cache
 import json
+import math
 from pathlib import Path
 import weakref
 
 from PySide6.QtCore import QObject, QSize, Qt
-from PySide6.QtGui import QImage, QImageReader, QMovie, QPixmap
+from PySide6.QtGui import QImage, QImageReader, QMovie, QPixmap, QTransform
+from .animation_assets import animation_parts, resolve_animation_assets
 
 STATES = {'idle': 'Покой', 'walk': 'Ходьба', 'fall': 'Падение',
           'land': 'Приземление', 'drag': 'В руке', 'talk': 'Говорит',
@@ -277,6 +280,88 @@ class Clip:
         return self.frames[index]
 
 
+class SequenceClip:
+    """An ordered timeline; repeated parts share decoded source frames."""
+    frames = ()
+    gif_delays = ()
+    movie = None
+
+    def __init__(self, spec, parent):
+        self.source_spec = copy.deepcopy(spec)
+        self.spec = copy.deepcopy(spec)
+        self.parts = []
+        self.ends = []
+        self.active = None
+        self.playing = False
+        self.mirrored = None
+        self.duration = 0
+        try:
+            # Validate the whole structure before loading any files.
+            list(animation_parts(spec))
+            if 'file' in spec:
+                raise ValueError('Выберите файл или сценарий для одного состояния.')
+            for index, step in enumerate(spec['sequence']):
+                repeat, mirror = step.get('repeat', 1), step.get('mirror', False)
+                name = step.get('name', '')
+                if type(repeat) is not int or not 1 <= repeat <= 100:
+                    raise ValueError(f'Часть {index + 1}: число повторов должно быть от 1 до 100.')
+                if type(mirror) is not bool or not isinstance(name, str) or len(name) > 80:
+                    raise ValueError(f'Часть {index + 1}: неверное имя или отражение.')
+                clip = Clip(step['animation'], parent)
+                self.parts.append(clip)
+                self.spec['sequence'][index] = {**step, 'animation': copy.deepcopy(clip.spec),
+                                               'repeat': repeat, 'mirror': mirror, 'name': name}
+                self.duration += clip.duration * repeat
+                self.ends.append(self.duration)
+        except Exception:
+            self.close()
+            raise
+
+    def position(self, elapsed, loop=True):
+        elapsed = max(0, elapsed)
+        cycle = int(elapsed / self.duration) if loop else 0
+        position = elapsed % self.duration if loop else min(elapsed, self.duration)
+        index = min(len(self.parts) - 1, bisect_right(self.ends, position + 1e-9))
+        offset = max(0, position - (self.ends[index - 1] if index else 0))
+        step = self.spec['sequence'][index]
+        clip = self.parts[index]
+        repetition = min(step['repeat'] - 1, int((offset + 1e-9) / clip.duration))
+        return index, repetition, min(clip.duration, max(0, offset - repetition * clip.duration)), cycle
+
+    def start(self):
+        self.stop()
+        self.playing = True
+
+    def stop(self):
+        for clip in self.parts:
+            clip.stop()
+        self.active = None
+        self.playing = False
+
+    def close(self):
+        self.stop()
+        for clip in self.parts:
+            clip.close()
+        self.mirrored = None
+
+    def frame(self, elapsed, loop=True):
+        index, repetition, local, cycle = self.position(elapsed, loop)
+        active = (index, repetition, cycle)
+        if active != self.active:
+            if self.active is not None:
+                self.parts[self.active[0]].stop()
+            self.active = active
+            if self.playing:
+                self.parts[index].start()
+        frame = self.parts[index].frame(local, loop=False)
+        if self.spec['sequence'][index]['mirror']:
+            key = frame.cacheKey()
+            if self.mirrored is None or self.mirrored[0] != key:
+                self.mirrored = (key, frame.transformed(QTransform().scale(-1, 1)))
+            return self.mirrored[1]
+        return frame
+
+
 class Animations(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -303,7 +388,7 @@ class Animations(QObject):
                 if existing and (spec == existing.source_spec or spec == existing.spec):
                     pending[state] = existing
                 else:
-                    pending[state] = Clip(spec, self)
+                    pending[state] = (SequenceClip if 'sequence' in spec else Clip)(spec, self)
                     created.append(pending[state])
         except (ValueError, TypeError, OverflowError) as error:
             for clip in created:
@@ -315,7 +400,7 @@ class Animations(QObject):
             else:
                 clip.stop()
         self.clips = pending
-        self.specs = {state: dict(clip.spec) for state, clip in pending.items()}
+        self.specs = {state: copy.deepcopy(clip.spec) for state, clip in pending.items()}
         self.active = None
 
     def restart(self):
@@ -342,6 +427,13 @@ class Animations(QObject):
         clip = self.clips.get(state)
         return clip.duration if clip else default
 
+    def idle_duration(self, state, minimum):
+        clip = self.clips.get(state)
+        if isinstance(clip, SequenceClip):
+            # Finish a whole cycle even if the minimum pause spans several.
+            return max(1, math.ceil(minimum / clip.duration - 1e-9)) * clip.duration
+        return max(minimum, clip.duration if clip else 0)
+
 
 def read_manifest(path):
     path = Path(path)
@@ -349,11 +441,7 @@ def read_manifest(path):
         data = json.loads(path.read_text(encoding='utf-8'))
         if data.get('version') != 1 or not isinstance(data.get('animations'), dict):
             raise ValueError('Ожидается набор персонажа версии 1.')
-        specs = data['animations']
-        for spec in specs.values():
-            spec['file'] = str((path.parent / Path(spec['file'])).resolve())
-            if 'project' in spec:
-                spec['project'] = str((path.parent / Path(spec['project'])).resolve())
+        specs = {state: resolve_animation_assets(spec, path.parent) for state, spec in data['animations'].items()}
         return str(data.get('name', path.stem)), specs
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         raise ValueError(f'Не удалось открыть набор: {error}') from error

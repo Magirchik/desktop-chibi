@@ -39,6 +39,31 @@ Desktop Chibi создаёт `~/.config/DesktopChibi/vesktop-bridge.json` (ил�
 
 ## Сборка и проверки
 
+### Мост пропал после обновления Vencord
+
+Штатное обновление Vencord может заменить пользовательскую сборку версией без
+`DesktopChibiBridge`. Desktop Chibi проверяет контрольные суммы при запуске моста
+и при потере связи, а «Проверить и исправить» объясняет причину.
+
+Если подготовленная сборка сохранилась в `.tools/vesktop-release`, посмотрите план:
+
+```sh
+.venv/bin/python integrations/vesktop/install.py --restore-only
+```
+
+Полностью закройте Vesktop через **«Выход»** (текущий звонок завершится), затем:
+
+```sh
+.venv/bin/python integrations/vesktop/install.py --restore-only --install
+```
+
+Режим восстановления сохраняет чибиков, все правила и ключи, создаёт резервные
+копии сборки и настроек Vesktop. Он возвращает плагин и отключает автообновление
+Vencord, чтобы штатная сборка снова его не удалила. Сам Vesktop можно обновлять;
+пользовательскую сборку Vencord обновляйте пересборкой вместе с плагином.
+При обычной установке моста автообновление Vencord также выключается.
+После восстановления запустите Vesktop заново.
+
 Официальный workflow пользовательских плагинов: [Vencord Docs](https://docs.vencord.dev/installing/custom-plugins/). Скопируйте каталог плагина в `src/userplugins/DesktopChibiBridge.vesktop` в исходниках Vencord, установите зависимости по lockfile и выполните `pnpm build --standalone`. Проверьте `pnpm testTsc`. Нативный IPC API следует [документации Vencord](https://docs.vencord.dev/plugins/native/).
 
 В этом проекте: `node integrations/vesktop/tests/renderer.test.mjs` проверяет переходы речи, пользователя, смену канала и выключение плагина. Python-тесты `test_vesktop_bridge.py` проверяют реальную доставку Node → Qt IPC → анимация, закрытый ключ, блокировку чужих ID, потерю связи, миграцию и установку в временный профиль.
